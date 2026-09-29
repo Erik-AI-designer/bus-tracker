@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus Tracker</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    max-width: 480px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+  h1 { font-size: 1.4rem; }
+  h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+  .stop { margin-bottom: 1rem; }
+  .route { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #ccc3; }
+  .plan-option { border: 1px solid #ccc5; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+  .on-time { color: #1a7f37; font-weight: 600; }
+  .late { color: #cf222e; font-weight: 600; }
+  .updated { font-size: 0.8rem; opacity: 0.6; }
+  button { padding: 8px 14px; border-radius: 6px; border: 1px solid #8888; cursor: pointer; }
+</style>
+</head>
+<body>
+  <h1>Bus Tracker</h1>
+  <button id="refresh">Refresh</button>
+  <p class="updated" id="updated"></p>
+  <div id="content">Loading…</div>
+
+  <script>
+    async function load() {
+      const content = document.getElementById("content");
+      content.textContent = "Loading…";
+      try {
+        const res = await fetch("/api/departures");
+        const data = await res.json();
+        render(data);
+      } catch (err) {
+        content.textContent = "Could not load departures: " + err.message;
+      }
+    }
+
+    function render(data) {
+      document.getElementById("updated").textContent = "Updated " + data.now;
+
+      if (data.isWeekend) {
+        document.getElementById("content").innerHTML = "<p>It's the weekend — no school run today.</p>";
+        return;
+      }
+
+      let html = "";
+
+      html += renderStop("Hämar tee", data.hamarTee);
+      html += renderStop("Lillepi", data.lillepi);
+
+      html += "<h2>School trip plan</h2>";
+      for (const opt of data.plan) {
+        if (opt.status) {
+          html += `<div class="plan-option">Bus 8 departs ${opt.departHamar}: ${opt.status}</div>`;
+          continue;
+        }
+        const statusClass = opt.onTime ? "on-time" : "late";
+        const statusText = opt.onTime ? "on time" : "LATE";
+        html += `<div class="plan-option">
+          Bus 8 departs <strong>${opt.departHamar}</strong> &rarr;
+          bus ${opt.connectRoute} at Lillepi (${opt.departLillepi}) &rarr;
+          school ~${opt.arriveSchool}
+          <span class="${statusClass}">[${statusText}]</span>
+        </div>`;
+      }
+
+      document.getElementById("content").innerHTML = html;
+    }
+
+    function renderStop(name, timesByRoute) {
+      let html = `<div class="stop"><h2>${name}</h2>`;
+      for (const [route, times] of Object.entries(timesByRoute)) {
+        const text = times.length ? times.map((m) => m + " min").join(", ") : "no upcoming buses";
+        html += `<div class="route"><span>Bus ${route}</span><span>${text}</span></div>`;
+      }
+      html += "</div>";
+      return html;
+    }
+
+    document.getElementById("refresh").addEventListener("click", load);
+    load();
+    setInterval(load, 30000);
+  </script>
+</body>
+</html>
