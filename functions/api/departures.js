@@ -8,7 +8,8 @@ const BUS8_TRAVEL_MINUTES = 10;
 const CONNECT_TRAVEL_MINUTES = 30;
 const TRANSFER_BUFFER_MINUTES = 1;
 
-const SCHOOL_ARRIVAL_TARGET = "08:45";
+const SCHOOL_ARRIVAL_TARGET = "08:00";
+const TIME_ZONE = "Europe/Tallinn";
 
 async function getDepartures(stopId, routes) {
   const url = new URL("https://transport.tallinn.ee/siri-stop-departures.php");
@@ -28,13 +29,46 @@ async function getDepartures(stopId, routes) {
 }
 
 function fmt(date) {
-  return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: TIME_ZONE });
+}
+
+function tallinnOffsetMinutes(date) {
+  const offsetPart = new Intl.DateTimeFormat("en-US", {
+    timeZone: TIME_ZONE,
+    timeZoneName: "shortOffset",
+  })
+    .formatToParts(date)
+    .find((p) => p.type === "timeZoneName").value;
+  const match = offsetPart.match(/GMT([+-]\d+)(?::(\d+))?/);
+  if (!match) return 0;
+  const hours = parseInt(match[1], 10);
+  const minutes = match[2] ? parseInt(match[2], 10) : 0;
+  return hours * 60 + (hours < 0 ? -minutes : minutes);
+}
+
+function tallinnTarget(date, hh, mm) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type).value;
+  const offsetMinutes = tallinnOffsetMinutes(date);
+  const utcGuess = new Date(
+    `${get("year")}-${get("month")}-${get("day")}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00Z`
+  );
+  return new Date(utcGuess.getTime() - offsetMinutes * 60000);
+}
+
+function isTallinnWeekend(date) {
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: TIME_ZONE, weekday: "short" }).format(date);
+  return weekday === "Sat" || weekday === "Sun";
 }
 
 function planSchoolTrip(now, hamarDepartures, lillepiDepartures) {
   const [h, m] = SCHOOL_ARRIVAL_TARGET.split(":").map(Number);
-  const target = new Date(now);
-  target.setHours(h, m, 0, 0);
+  const target = tallinnTarget(now, h, m);
   const hamarTimes = [...hamarDepartures[BUS8_ROUTE]].sort((a, b) => a - b);
   const connectingTimes = [];
   for (const [route, minutesList] of Object.entries(lillepiDepartures)) {
@@ -74,7 +108,7 @@ export async function onRequestGet() {
   const plan = planSchoolTrip(now, hamarDepartures, lillepiDepartures);
   return Response.json({
     now: fmt(now),
-    isWeekend: now.getDay() === 0 || now.getDay() === 6,
+    isWeekend: isTallinnWeekend(now),
     hamarTee: hamarDepartures,
     lillepi: lillepiDepartures,
     plan,
