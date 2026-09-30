@@ -465,11 +465,16 @@
       const groundY = 120;
       const playerSize = 24;
 
-      let player, obstacles, speed, score, running, lastTime, spawnTimer;
+      let player, obstacles, clouds, speed, score, running, lastTime, spawnTimer;
 
       function reset() {
         player = { y: groundY, vy: 0, jumping: false };
         obstacles = [];
+        clouds = [
+          { x: 80, y: 25 },
+          { x: 260, y: 45 },
+          { x: 440, y: 20 },
+        ];
         speed = 4;
         score = 0;
         spawnTimer = 0;
@@ -506,6 +511,11 @@
         for (const o of obstacles) o.x -= speed;
         obstacles = obstacles.filter((o) => o.x + o.width > 0);
 
+        for (const c of clouds) {
+          c.x -= 0.4;
+          if (c.x < -40) c.x = canvas.width + 40;
+        }
+
         const playerX = 40;
         const groundLine = groundY + playerSize;
         for (const o of obstacles) {
@@ -524,20 +534,59 @@
       }
 
       function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = "#555";
-        ctx.fillRect(0, groundY + playerSize, canvas.width, 2);
-        ctx.fillStyle = "#e07a3f";
-        ctx.fillRect(40, player.y, playerSize, playerSize);
-        ctx.fillStyle = "#2f7a34";
-        for (const o of obstacles) {
-          ctx.fillRect(o.x, groundY + playerSize - o.height, o.width, o.height);
+        const groundLine = groundY + playerSize;
+
+        const sky = ctx.createLinearGradient(0, 0, 0, groundLine);
+        sky.addColorStop(0, "#87ceeb");
+        sky.addColorStop(1, "#e3f6ff");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#ffe066";
+        ctx.beginPath();
+        ctx.arc(canvas.width - 45, 30, 16, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#ffffffcc";
+        for (const c of clouds) {
+          ctx.beginPath();
+          ctx.ellipse(c.x, c.y, 18, 9, 0, 0, Math.PI * 2);
+          ctx.ellipse(c.x + 14, c.y + 3, 13, 7, 0, 0, Math.PI * 2);
+          ctx.fill();
         }
-        ctx.fillStyle = "#333";
-        ctx.font = "16px sans-serif";
-        ctx.fillText("Score: " + Math.floor(score), canvas.width - 110, 20);
+
+        ctx.fillStyle = "#c2a878";
+        ctx.fillRect(0, groundLine, canvas.width, canvas.height - groundLine);
+        ctx.strokeStyle = "#8a6d3b";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, groundLine);
+        ctx.lineTo(canvas.width, groundLine);
+        ctx.stroke();
+
+        ctx.textBaseline = "alphabetic";
+        ctx.font = (playerSize + 10) + "px serif";
+        ctx.fillText("🦖", 34, player.y + playerSize + 6);
+
+        ctx.font = "26px serif";
+        for (const o of obstacles) {
+          ctx.fillText("🌵", o.x - 6, groundLine + 2);
+        }
+
+        ctx.fillStyle = "#24292e";
+        ctx.font = "bold 15px sans-serif";
+        ctx.fillText("Score: " + Math.floor(score), canvas.width - 108, 22);
+
         if (!running) {
-          ctx.fillText("Game over — space/tap to restart", canvas.width / 2 - 110, canvas.height / 2);
+          ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#fff";
+          ctx.textAlign = "center";
+          ctx.font = "bold 18px sans-serif";
+          ctx.fillText("Game over!", canvas.width / 2, canvas.height / 2 - 8);
+          ctx.font = "14px sans-serif";
+          ctx.fillText("Space, tap, or click to restart", canvas.width / 2, canvas.height / 2 + 16);
+          ctx.textAlign = "left";
         }
       }
 
