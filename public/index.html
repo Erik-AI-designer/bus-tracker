@@ -106,7 +106,7 @@
       html += "<h2>School trip plan</h2>";
       for (const opt of data.plan) {
         if (opt.status) {
-          html += `<div class="plan-option">Bus 8 departs ${opt.departHamar}: ${opt.status}</div>`;
+              html += `<div class="plan-option">${opt.status}</div>`;
           continue;
         }
         const statusClass = opt.onTime ? "on-time" : "late";
