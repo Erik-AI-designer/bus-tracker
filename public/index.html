@@ -5,75 +5,157 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bus Tracker</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
   body {
     font-family: -apple-system, system-ui, sans-serif;
+    margin: 0;
+    padding: 16px;
+    min-height: 100vh;
+    color: #24292e;
+    background: linear-gradient(135deg, #ff5f6d, #ffc371, #f9f871, #56ccf2, #a86ef7, #ff6ec7);
+    background-attachment: fixed;
+  }
+  .page {
     max-width: 480px;
     margin: 0 auto;
-    padding: 16px;
+    display: grid;
+    gap: 20px;
   }
-  h1 { font-size: 1.4rem; }
-  h2 { font-size: 1.1rem; margin-top: 1.5rem; }
-  hr { border: none; border-top: 1px solid #8884; margin: 1.5rem 0; }
+  .card {
+    background: rgba(255, 255, 255, 0.94);
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+  }
+  h1 { font-size: 1.5rem; margin-top: 0; }
+  h2 { font-size: 1.1rem; margin-top: 0; }
   .stop { margin-bottom: 1rem; }
-  .route { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #ccc3; }
-  .plan-option { border: 1px solid #ccc5; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+  .route { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #0001; }
+  .plan-option { border: 1px solid #0002; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
   .on-time { color: #1a7f37; font-weight: 600; }
   .late { color: #cf222e; font-weight: 600; }
   .updated { font-size: 0.8rem; opacity: 0.6; }
-  button { padding: 8px 14px; border-radius: 6px; border: 1px solid #8888; cursor: pointer; }
+  button {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, #ff5f6d, #a86ef7);
+  }
+  button:hover { filter: brightness(1.05); }
   .field { margin-bottom: 10px; position: relative; }
   .field label { display: block; font-size: 0.85rem; opacity: 0.7; margin-bottom: 4px; }
-  .field input { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 6px; border: 1px solid #8888; background: transparent; color: inherit; }
-  .suggestions { position: absolute; left: 0; right: 0; z-index: 10; background: canvas; border: 1px solid #8888; border-radius: 6px; max-height: 200px; overflow-y: auto; }
-  .suggestion-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #ccc3; }
-  .suggestion-item:hover { background: #8882; }
+  .field input {
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid #0002;
+    background: #fff;
+    color: inherit;
+  }
+  .suggestions { position: absolute; left: 0; right: 0; z-index: 10; background: #fff; border: 1px solid #0002; border-radius: 8px; max-height: 200px; overflow-y: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+  .suggestion-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #0001; }
+  .suggestion-item:hover { background: #0001; }
   .suggestion-item small { display: block; opacity: 0.6; }
-  .leg { padding: 4px 0 4px 10px; border-left: 2px solid #8886; margin: 4px 0; font-size: 0.9rem; }
+  .leg { padding: 4px 0 4px 10px; border-left: 2px solid #0002; margin: 4px 0; font-size: 0.9rem; }
   .leg .walk { opacity: 0.7; font-style: italic; }
-  .route-block { border: 1px solid #ccc5; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .route-block { border: 1px solid #0002; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
   .stop-list { font-size: 0.85rem; line-height: 1.6; opacity: 0.9; }
   .muted { opacity: 0.6; font-size: 0.85rem; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .chip {
+    background: #0000000d;
+    color: #24292e;
+    font-weight: 500;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+  }
+  .secondary-button {
+    background: #0000000d;
+    color: #24292e;
+    font-weight: 500;
+  }
+  #dinoCanvas { width: 100%; max-width: 600px; background: #f7f7f7; border-radius: 8px; touch-action: none; display: block; }
+
+  /* Tablet and up: two columns */
+  @media (min-width: 700px) {
+    .page {
+      max-width: 900px;
+      grid-template-columns: 1fr 1fr;
+    }
+    .card--wide { grid-column: 1 / -1; }
+  }
+
+  /* Desktop: three columns, full spread */
+  @media (min-width: 1100px) {
+    .page {
+      max-width: 1400px;
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+    .card--wide { grid-column: auto; }
+  }
 </style>
 </head>
 <body>
-  <h1>Bus Tracker</h1>
-  <button id="refresh">Refresh</button>
-  <p class="updated" id="updated"></p>
-  <div class="field">
-    <label>School arrival time</label>
-    <input id="schoolArrivalInput" type="time">
-  </div>
-  <div id="content">Loading…</div>
+  <div class="page">
+    <div class="card card--wide">
+      <h1>Bus Tracker</h1>
+      <button id="refresh">Refresh</button>
+      <p class="updated" id="updated"></p>
+      <div class="field">
+        <label>School arrival time</label>
+        <input id="schoolArrivalInput" type="time">
+      </div>
+      <div id="content">Loading…</div>
+    </div>
 
-  <hr>
-  <h2>Plan a different trip</h2>
-  <div class="field">
-    <label>From</label>
-    <input id="fromInput" type="text" placeholder="Search a stop, e.g. Lillepi" autocomplete="off">
-    <div class="suggestions" id="fromSuggestions"></div>
-    <button id="useLocationButton" type="button" style="margin-top: 6px;">Use my location</button>
-    <p class="muted" id="locationStatus" style="margin-top: 4px;"></p>
-  </div>
-  <div class="field">
-    <label>To</label>
-    <input id="toInput" type="text" placeholder="Search a stop" autocomplete="off">
-    <div class="suggestions" id="toSuggestions"></div>
-  </div>
-  <div class="field">
-    <label>Arrive by (optional, leave blank for next buses now)</label>
-    <input id="arriveByInput" type="time">
-  </div>
-  <button id="planButton">Find buses</button>
-  <div id="planResults"></div>
+    <div class="card">
+      <h2>Plan a different trip</h2>
+      <div class="field">
+        <label>Favorite stops (tap to fill in "From")</label>
+        <div class="chip-row" id="favoritesBox"></div>
+        <button id="saveFavoriteButton" type="button" class="secondary-button">★ Save current "From" as favorite</button>
+      </div>
+      <div class="field">
+        <label>From</label>
+        <input id="fromInput" type="text" placeholder="Search a stop, e.g. Lillepi" autocomplete="off">
+        <div class="suggestions" id="fromSuggestions"></div>
+        <button id="useLocationButton" type="button" style="margin-top: 6px;">Use my location</button>
+        <p class="muted" id="locationStatus" style="margin-top: 4px;"></p>
+      </div>
+      <div class="field">
+        <label>To</label>
+        <input id="toInput" type="text" placeholder="Search a stop" autocomplete="off">
+        <div class="suggestions" id="toSuggestions"></div>
+      </div>
+      <div class="field">
+        <label>Arrive by (optional, leave blank for next buses now)</label>
+        <input id="arriveByInput" type="time">
+      </div>
+      <button id="planButton">Find buses</button>
+      <div id="planResults"></div>
+    </div>
 
-  <hr>
-  <h2>Look up a bus route</h2>
-  <div class="field">
-    <input id="routeInput" type="text" placeholder="e.g. 8, 34, T1" autocomplete="off">
+    <div class="card">
+      <h2>Look up a bus route</h2>
+      <div class="field">
+        <input id="routeInput" type="text" placeholder="e.g. 8, 34, T1" autocomplete="off">
+      </div>
+      <button id="routeButton">Look up</button>
+      <div id="routeResults"></div>
+    </div>
+
+    <div class="card" id="dinoCard">
+      <h2>🦕 No-internet game</h2>
+      <p class="muted">Space, tap, or click to jump over the cactus.</p>
+      <canvas id="dinoCanvas" width="600" height="150"></canvas>
+      <button id="dinoStartButton" type="button" style="margin-top: 8px;">Play</button>
+    </div>
   </div>
-  <button id="routeButton">Look up</button>
-  <div id="routeResults"></div>
 
   <script>
     async function load() {
@@ -86,7 +168,10 @@
         const data = await res.json();
         render(data);
       } catch (err) {
-        content.textContent = "Could not load departures: " + err.message;
+        const offlineHint = !navigator.onLine
+          ? " Looks like you're offline — scroll down and play the dinosaur game while you wait! 🦕"
+          : "";
+        content.textContent = "Could not load departures: " + err.message + offlineHint;
       }
     }
 
@@ -106,7 +191,7 @@
       html += "<h2>School trip plan</h2>";
       for (const opt of data.plan) {
         if (opt.status) {
-              html += `<div class="plan-option">${opt.status}</div>`;
+          html += `<div class="plan-option">${opt.status}</div>`;
           continue;
         }
         const statusClass = opt.onTime ? "on-time" : "late";
@@ -316,6 +401,170 @@
         results.textContent = "Could not look up route: " + err.message;
       }
     });
+
+    // ---- Favorite stops ----
+
+    function loadFavorites() {
+      try {
+        return JSON.parse(localStorage.getItem("favoriteStops") || "[]");
+      } catch {
+        return [];
+      }
+    }
+
+    function saveFavoritesList(favorites) {
+      try {
+        localStorage.setItem("favoriteStops", JSON.stringify(favorites));
+      } catch {}
+    }
+
+    function renderFavorites() {
+      const favorites = loadFavorites();
+      const box = document.getElementById("favoritesBox");
+      box.innerHTML = favorites.length
+        ? favorites
+            .map(
+              (f) =>
+                `<button type="button" class="chip" data-id="${f.id}" data-name="${f.name.replace(/"/g, "&quot;")}">${f.name}</button>`
+            )
+            .join("")
+        : '<p class="muted">No favorite stops saved yet.</p>';
+    }
+
+    document.getElementById("favoritesBox").addEventListener("click", (e) => {
+      const chip = e.target.closest(".chip");
+      if (!chip) return;
+      document.getElementById("fromInput").value = chip.dataset.name;
+      fromId = chip.dataset.id;
+    });
+
+    document.getElementById("saveFavoriteButton").addEventListener("click", () => {
+      const id = getFromId();
+      if (!id) {
+        alert('Pick a "From" stop from the suggestion list first.');
+        return;
+      }
+      const name = document.getElementById("fromInput").value;
+      const favorites = loadFavorites();
+      if (!favorites.some((f) => f.id === id)) {
+        favorites.push({ id, name });
+        if (favorites.length > 6) favorites.shift();
+        saveFavoritesList(favorites);
+        renderFavorites();
+      }
+    });
+
+    renderFavorites();
+
+    // ---- No-internet dinosaur game ----
+
+    (function setupDinoGame() {
+      const canvas = document.getElementById("dinoCanvas");
+      const ctx = canvas.getContext("2d");
+      const startButton = document.getElementById("dinoStartButton");
+      const groundY = 120;
+      const playerSize = 24;
+
+      let player, obstacles, speed, score, running, lastTime, spawnTimer;
+
+      function reset() {
+        player = { y: groundY, vy: 0, jumping: false };
+        obstacles = [];
+        speed = 4;
+        score = 0;
+        spawnTimer = 0;
+        running = true;
+      }
+
+      function jump() {
+        if (!running) {
+          reset();
+          lastTime = null;
+          requestAnimationFrame(loop);
+          return;
+        }
+        if (!player.jumping) {
+          player.vy = -10;
+          player.jumping = true;
+        }
+      }
+
+      function update(dt) {
+        player.vy += 0.5;
+        player.y += player.vy;
+        if (player.y >= groundY) {
+          player.y = groundY;
+          player.vy = 0;
+          player.jumping = false;
+        }
+
+        spawnTimer -= dt;
+        if (spawnTimer <= 0) {
+          obstacles.push({ x: canvas.width, width: 14, height: 30 + Math.random() * 20 });
+          spawnTimer = 800 + Math.random() * 800;
+        }
+        for (const o of obstacles) o.x -= speed;
+        obstacles = obstacles.filter((o) => o.x + o.width > 0);
+
+        const playerX = 40;
+        const groundLine = groundY + playerSize;
+        for (const o of obstacles) {
+          const obstacleTop = groundLine - o.height;
+          if (
+            playerX + playerSize > o.x &&
+            playerX < o.x + o.width &&
+            player.y + playerSize > obstacleTop
+          ) {
+            running = false;
+          }
+        }
+
+        score += dt * 0.01;
+        speed = 4 + score / 200;
+      }
+
+      function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#555";
+        ctx.fillRect(0, groundY + playerSize, canvas.width, 2);
+        ctx.fillStyle = "#e07a3f";
+        ctx.fillRect(40, player.y, playerSize, playerSize);
+        ctx.fillStyle = "#2f7a34";
+        for (const o of obstacles) {
+          ctx.fillRect(o.x, groundY + playerSize - o.height, o.width, o.height);
+        }
+        ctx.fillStyle = "#333";
+        ctx.font = "16px sans-serif";
+        ctx.fillText("Score: " + Math.floor(score), canvas.width - 110, 20);
+        if (!running) {
+          ctx.fillText("Game over — space/tap to restart", canvas.width / 2 - 110, canvas.height / 2);
+        }
+      }
+
+      function loop(time) {
+        const dt = lastTime ? time - lastTime : 16;
+        lastTime = time;
+        if (running) update(dt);
+        draw();
+        if (running) requestAnimationFrame(loop);
+      }
+
+      startButton.addEventListener("click", () => {
+        reset();
+        lastTime = null;
+        requestAnimationFrame(loop);
+      });
+      canvas.addEventListener("click", jump);
+      document.addEventListener("keydown", (e) => {
+        if (e.code === "Space") {
+          e.preventDefault();
+          jump();
+        }
+      });
+
+      reset();
+      draw();
+    })();
   </script>
 </body>
 </html>
