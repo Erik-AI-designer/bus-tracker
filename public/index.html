@@ -48,6 +48,8 @@
     <label>From</label>
     <input id="fromInput" type="text" placeholder="Search a stop, e.g. Lillepi" autocomplete="off">
     <div class="suggestions" id="fromSuggestions"></div>
+    <button id="useLocationButton" type="button" style="margin-top: 6px;">Use my location</button>
+    <p class="muted" id="locationStatus" style="margin-top: 4px;"></p>
   </div>
   <div class="field">
     <label>To</label>
@@ -126,7 +128,6 @@
 
     document.getElementById("refresh").addEventListener("click", load);
     load();
-    setInterval(load, 30000);
 
     // ---- Stop search + trip planning ----
 
@@ -184,6 +185,47 @@
     let toId = null;
     const getFromId = setupStopSearch("fromInput", "fromSuggestions", (id) => (fromId = id));
     const getToId = setupStopSearch("toInput", "toSuggestions", (id) => (toId = id));
+
+    document.getElementById("useLocationButton").addEventListener("click", () => {
+      const status = document.getElementById("locationStatus");
+      const box = document.getElementById("fromSuggestions");
+
+      if (!navigator.geolocation) {
+        status.textContent = "Location isn't supported on this device.";
+        return;
+      }
+
+      status.textContent = "Finding your location…";
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          status.textContent = "Looking for nearby stops…";
+          try {
+            const res = await fetch(`/api/nearby-stops?lat=${latitude}&lon=${longitude}`);
+            const data = await res.json();
+            if (!data.stops || !data.stops.length) {
+              status.textContent = "No stops found nearby.";
+              return;
+            }
+            status.textContent = "Pick the closest stop:";
+            box.innerHTML = data.stops
+              .map(
+                (s) =>
+                  `<div class="suggestion-item" data-id="${s.id}" data-name="${s.name.replace(/"/g, "&quot;")}">
+                    ${s.name} — ${s.distance} m
+                    <small>${s.routes.slice(0, 8).join(", ")}</small>
+                  </div>`
+              )
+              .join("");
+          } catch (err) {
+            status.textContent = "Could not look up nearby stops: " + err.message;
+          }
+        },
+        (err) => {
+          status.textContent = "Location access denied or unavailable: " + err.message;
+        }
+      );
+    });
 
     document.getElementById("planButton").addEventListener("click", async () => {
       const results = document.getElementById("planResults");
