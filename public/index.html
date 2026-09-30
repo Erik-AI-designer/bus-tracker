@@ -40,6 +40,10 @@
   <h1>Bus Tracker</h1>
   <button id="refresh">Refresh</button>
   <p class="updated" id="updated"></p>
+  <div class="field">
+    <label>School arrival time</label>
+    <input id="schoolArrivalInput" type="time">
+  </div>
   <div id="content">Loading…</div>
 
   <hr>
@@ -76,7 +80,9 @@
       const content = document.getElementById("content");
       content.textContent = "Loading…";
       try {
-        const res = await fetch("/api/departures");
+        const arrivalTime = document.getElementById("schoolArrivalInput").value;
+        const url = "/api/departures" + (arrivalTime ? "?arriveBy=" + encodeURIComponent(arrivalTime) : "");
+        const res = await fetch(url);
         const data = await res.json();
         render(data);
       } catch (err) {
@@ -125,6 +131,19 @@
       html += "</div>";
       return html;
     }
+
+    const schoolArrivalInput = document.getElementById("schoolArrivalInput");
+    try {
+      schoolArrivalInput.value = localStorage.getItem("schoolArrivalTime") || "08:00";
+    } catch {
+      schoolArrivalInput.value = "08:00";
+    }
+    schoolArrivalInput.addEventListener("change", () => {
+      try {
+        localStorage.setItem("schoolArrivalTime", schoolArrivalInput.value);
+      } catch {}
+      load();
+    });
 
     document.getElementById("refresh").addEventListener("click", load);
     load();
