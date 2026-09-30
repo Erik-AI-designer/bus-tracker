@@ -66,8 +66,8 @@ function isTallinnWeekend(date) {
   return weekday === "Sat" || weekday === "Sun";
 }
 
-function planSchoolTrip(now, hamarDepartures, lillepiDepartures) {
-  const [h, m] = SCHOOL_ARRIVAL_TARGET.split(":").map(Number);
+function planSchoolTrip(now, hamarDepartures, lillepiDepartures, arrivalTarget) {
+  const [h, m] = arrivalTarget.split(":").map(Number);
   const target = tallinnTarget(now, h, m);
   const hamarTimes = [...hamarDepartures[BUS8_ROUTE]].sort((a, b) => a - b);
   const connectingTimes = [];
@@ -99,13 +99,14 @@ function planSchoolTrip(now, hamarDepartures, lillepiDepartures) {
   return options;
 }
 
-export async function onRequestGet() {
+export async function onRequestGet({ request }) {
   const now = new Date();
+  const arrivalTarget = new URL(request.url).searchParams.get("arriveBy") || SCHOOL_ARRIVAL_TARGET;
   const [hamarDepartures, lillepiDepartures] = await Promise.all([
     getDepartures(STOP_HAMAR_TEE, ["8", "48"]),
     getDepartures(STOP_LILLEPI, CONNECTING_ROUTES),
   ]);
-  const plan = planSchoolTrip(now, hamarDepartures, lillepiDepartures);
+  const plan = planSchoolTrip(now, hamarDepartures, lillepiDepartures, arrivalTarget);
   return Response.json({
     now: fmt(now),
     isWeekend: isTallinnWeekend(now),
