@@ -1,5 +1,5 @@
-const STOP_HAMAR_TEE = 1573;
-const STOP_LILLEPI = 1515;
+const STOP_HAMAR_TEE = "estonia:1573";
+const STOP_LILLEPI = "estonia:1515";
 
 const BUS8_ROUTE = "8";
 const CONNECTING_ROUTES = ["1", "5"];
@@ -11,9 +11,23 @@ const TRANSFER_BUFFER_MINUTES = 1;
 const SCHOOL_ARRIVAL_TARGET = "08:00";
 const TIME_ZONE = "Europe/Tallinn";
 
-async function getDepartures(stopId, routes) {
+const PEATUS_API = "https://api.peatus.ee/routing/v1/routers/estonia/index/graphql";
+
+async function graphql(query) {
+  const response = await fetch(PEATUS_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  const json = await response.json();
+  if (json.errors) throw new Error(json.errors.map((e) => e.message).join("; "));
+  return json.data;
+}
+
+async function getLiveDepartures(stopId, routes) {
+  const legacyStopId = stopId.split(":")[1];
   const url = new URL("https://transport.tallinn.ee/siri-stop-departures.php");
-  url.searchParams.set("stopid", stopId);
+  url.searchParams.set("stopid", legacyStopId);
   const response = await fetch(url, { headers: { "user-agent": "Mozilla/5.0" } });
   const text = await response.text();
   const lines = text.split("\n").slice(2);
@@ -28,8 +42,46 @@ async function getDepartures(stopId, routes) {
   return timesByRoute;
 }
 
+// Full scheduled timetable for one stop/date, as a flat list of {routeName, time} (absolute JS Date).
+async function getScheduledDepartures(stopId, routeNames, dateYyyymmdd) {
+  const data = await graphql(`{
+    stop(id: "${stopId}") {
+      stoptimesForServiceDate(date: "${dateYyyymmdd}") {
+        pattern { route { shortName } }
+        stoptimes { scheduledDeparture serviceDay }
+      }
+    }
+  }`);
+
+  const patterns = data.stop.stoptimesForServiceDate || [];
+  const departures = [];
+  for (const pattern of patterns) {
+    const routeName = pattern.pattern.route.shortName;
+    if (!routeNames.includes(routeName)) continue;
+    for (const st of pattern.stoptimes) {
+      departures.push({
+        route: routeName,
+        time: new Date((st.serviceDay + st.scheduledDeparture) * 1000),
+      });
+    }
+  }
+  departures.sort((a, b) => a.time - b.time);
+  return departures;
+}
+
 function fmt(date) {
   return date.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: TIME_ZONE });
+}
+
+function tallinnDateString(date, separator) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const get = (type) => parts.find((p) => p.type === type).value;
+  return `${get("year")}${separator}${get("month")}${separator}${get("day")}`;
 }
 
 function tallinnOffsetMinutes(date) {
@@ -46,19 +98,14 @@ function tallinnOffsetMinutes(date) {
   return hours * 60 + (hours < 0 ? -minutes : minutes);
 }
 
-function tallinnTarget(date, hh, mm) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const get = (type) => parts.find((p) => p.type === type).value;
-  const offsetMinutes = tallinnOffsetMinutes(date);
-  const utcGuess = new Date(
-    `${get("year")}-${get("month")}-${get("day")}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00Z`
-  );
-  return new Date(utcGuess.getTime() - offsetMinutes * 60000);
+// The next occurrence (today or tomorrow) of hh:mm in Tallinn time, on or after `now`.
+function nextTallinnOccurrence(now, hh, mm) {
+  const dateStr = tallinnDateString(now, "-");
+  const offsetMinutes = tallinnOffsetMinutes(now);
+  const utcGuess = new Date(`${dateStr}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00Z`);
+  let target = new Date(utcGuess.getTime() - offsetMinutes * 60000);
+  if (target < now) target = new Date(target.getTime() + 24 * 60 * 60 * 1000);
+  return target;
 }
 
 function isTallinnWeekend(date) {
@@ -66,53 +113,62 @@ function isTallinnWeekend(date) {
   return weekday === "Sat" || weekday === "Sun";
 }
 
-function planSchoolTrip(now, hamarDepartures, lillepiDepartures, arrivalTarget) {
+async function planSchoolTrip(now, arrivalTarget) {
   const [h, m] = arrivalTarget.split(":").map(Number);
-  const target = tallinnTarget(now, h, m);
-  const hamarTimes = [...hamarDepartures[BUS8_ROUTE]].sort((a, b) => a - b);
-  const connectingTimes = [];
-  for (const [route, minutesList] of Object.entries(lillepiDepartures)) {
-    for (const mins of minutesList) {
-      connectingTimes.push({ time: new Date(now.getTime() + mins * 60000), route });
-    }
-  }
-  connectingTimes.sort((a, b) => a.time - b.time);
-  const options = [];
-  for (const minutes of hamarTimes.slice(0, 2)) {
-    const departHamar = new Date(now.getTime() + minutes * 60000);
-    const arriveLillepi = new Date(departHamar.getTime() + BUS8_TRAVEL_MINUTES * 60000);
+  const target = nextTallinnOccurrence(now, h, m);
+  const dateYyyymmdd = tallinnDateString(target, "");
+
+  const [hamarDepartures, lillepiDepartures] = await Promise.all([
+    getScheduledDepartures(STOP_HAMAR_TEE, [BUS8_ROUTE], dateYyyymmdd),
+    getScheduledDepartures(STOP_LILLEPI, CONNECTING_ROUTES, dateYyyymmdd),
+  ]);
+
+  const candidates = [];
+  for (const dep of hamarDepartures) {
+    if (dep.time < now) continue;
+    const arriveLillepi = new Date(dep.time.getTime() + BUS8_TRAVEL_MINUTES * 60000);
     const earliestConnect = new Date(arriveLillepi.getTime() + TRANSFER_BUFFER_MINUTES * 60000);
-    const connection = connectingTimes.find((c) => c.time >= earliestConnect);
-    if (!connection) {
-      options.push({ departHamar: fmt(departHamar), status: "no connecting bus found in current data" });
-      continue;
-    }
+    const connection = lillepiDepartures.find((c) => c.time >= earliestConnect);
+    if (!connection) continue;
     const arriveSchool = new Date(connection.time.getTime() + CONNECT_TRAVEL_MINUTES * 60000);
-    options.push({
-      departHamar: fmt(departHamar),
+    candidates.push({
+      departHamar: fmt(dep.time),
       connectRoute: connection.route,
       departLillepi: fmt(connection.time),
       arriveSchool: fmt(arriveSchool),
       onTime: arriveSchool <= target,
     });
   }
-  return options;
+
+  if (!candidates.length) {
+    return [{ status: "no bus 8 departures found for that day" }];
+  }
+
+  const onTimeOptions = candidates.filter((c) => c.onTime);
+  if (onTimeOptions.length) {
+    // Latest (most efficient) on-time options first.
+    return onTimeOptions.slice(-2).reverse();
+  }
+
+  // Nothing arrives in time — show the earliest options so it's clear how late they'd be.
+  return candidates.slice(0, 2);
 }
 
 export async function onRequestGet({ request }) {
   const now = new Date();
   const arrivalTarget = new URL(request.url).searchParams.get("arriveBy") || SCHOOL_ARRIVAL_TARGET;
-  const [hamarDepartures, lillepiDepartures] = await Promise.all([
-    getDepartures(STOP_HAMAR_TEE, ["8", "48"]),
-    getDepartures(STOP_LILLEPI, CONNECTING_ROUTES),
+
+  const [hamarLive, lillepiLive, plan] = await Promise.all([
+    getLiveDepartures(STOP_HAMAR_TEE, ["8", "48"]),
+    getLiveDepartures(STOP_LILLEPI, CONNECTING_ROUTES),
+    planSchoolTrip(now, arrivalTarget),
   ]);
-  const plan = planSchoolTrip(now, hamarDepartures, lillepiDepartures, arrivalTarget);
+
   return Response.json({
     now: fmt(now),
     isWeekend: isTallinnWeekend(now),
-    hamarTee: hamarDepartures,
-    lillepi: lillepiDepartures,
+    hamarTee: hamarLive,
+    lillepi: lillepiLive,
     plan,
   });
 }
-
