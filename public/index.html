@@ -14,6 +14,7 @@
   }
   h1 { font-size: 1.4rem; }
   h2 { font-size: 1.1rem; margin-top: 1.5rem; }
+  hr { border: none; border-top: 1px solid #8884; margin: 1.5rem 0; }
   .stop { margin-bottom: 1rem; }
   .route { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #ccc3; }
   .plan-option { border: 1px solid #ccc5; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
@@ -21,6 +22,18 @@
   .late { color: #cf222e; font-weight: 600; }
   .updated { font-size: 0.8rem; opacity: 0.6; }
   button { padding: 8px 14px; border-radius: 6px; border: 1px solid #8888; cursor: pointer; }
+  .field { margin-bottom: 10px; position: relative; }
+  .field label { display: block; font-size: 0.85rem; opacity: 0.7; margin-bottom: 4px; }
+  .field input { width: 100%; box-sizing: border-box; padding: 8px; border-radius: 6px; border: 1px solid #8888; background: transparent; color: inherit; }
+  .suggestions { position: absolute; left: 0; right: 0; z-index: 10; background: canvas; border: 1px solid #8888; border-radius: 6px; max-height: 200px; overflow-y: auto; }
+  .suggestion-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #ccc3; }
+  .suggestion-item:hover { background: #8882; }
+  .suggestion-item small { display: block; opacity: 0.6; }
+  .leg { padding: 4px 0 4px 10px; border-left: 2px solid #8886; margin: 4px 0; font-size: 0.9rem; }
+  .leg .walk { opacity: 0.7; font-style: italic; }
+  .route-block { border: 1px solid #ccc5; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .stop-list { font-size: 0.85rem; line-height: 1.6; opacity: 0.9; }
+  .muted { opacity: 0.6; font-size: 0.85rem; }
 </style>
 </head>
 <body>
@@ -28,6 +41,33 @@
   <button id="refresh">Refresh</button>
   <p class="updated" id="updated"></p>
   <div id="content">Loading…</div>
+
+  <hr>
+  <h2>Plan a different trip</h2>
+  <div class="field">
+    <label>From</label>
+    <input id="fromInput" type="text" placeholder="Search a stop, e.g. Lillepi" autocomplete="off">
+    <div class="suggestions" id="fromSuggestions"></div>
+  </div>
+  <div class="field">
+    <label>To</label>
+    <input id="toInput" type="text" placeholder="Search a stop" autocomplete="off">
+    <div class="suggestions" id="toSuggestions"></div>
+  </div>
+  <div class="field">
+    <label>Arrive by (optional, leave blank for next buses now)</label>
+    <input id="arriveByInput" type="time">
+  </div>
+  <button id="planButton">Find buses</button>
+  <div id="planResults"></div>
+
+  <hr>
+  <h2>Look up a bus route</h2>
+  <div class="field">
+    <input id="routeInput" type="text" placeholder="e.g. 8, 34, T1" autocomplete="off">
+  </div>
+  <button id="routeButton">Look up</button>
+  <div id="routeResults"></div>
 
   <script>
     async function load() {
@@ -87,6 +127,134 @@
     document.getElementById("refresh").addEventListener("click", load);
     load();
     setInterval(load, 30000);
+
+    // ---- Stop search + trip planning ----
+
+    function setupStopSearch(inputId, suggestionsId, onSelect) {
+      const input = document.getElementById(inputId);
+      const box = document.getElementById(suggestionsId);
+      let selectedId = null;
+      let debounceTimer = null;
+
+      input.addEventListener("input", () => {
+        selectedId = null;
+        onSelect(null);
+        clearTimeout(debounceTimer);
+        const q = input.value.trim();
+        if (q.length < 2) {
+          box.innerHTML = "";
+          return;
+        }
+        debounceTimer = setTimeout(async () => {
+          try {
+            const res = await fetch("/api/stops?q=" + encodeURIComponent(q));
+            const data = await res.json();
+            box.innerHTML = data.stops
+              .map(
+                (s) =>
+                  `<div class="suggestion-item" data-id="${s.id}" data-name="${s.name.replace(/"/g, "&quot;")}">
+                    ${s.name}
+                    <small>${s.routes.slice(0, 8).join(", ")}</small>
+                  </div>`
+              )
+              .join("");
+          } catch (err) {
+            box.innerHTML = `<div class="suggestion-item">Search failed: ${err.message}</div>`;
+          }
+        }, 300);
+      });
+
+      box.addEventListener("click", (e) => {
+        const item = e.target.closest(".suggestion-item");
+        if (!item || !item.dataset.id) return;
+        input.value = item.dataset.name;
+        selectedId = item.dataset.id;
+        box.innerHTML = "";
+        onSelect(selectedId);
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!input.contains(e.target) && !box.contains(e.target)) box.innerHTML = "";
+      });
+
+      return () => selectedId;
+    }
+
+    let fromId = null;
+    let toId = null;
+    const getFromId = setupStopSearch("fromInput", "fromSuggestions", (id) => (fromId = id));
+    const getToId = setupStopSearch("toInput", "toSuggestions", (id) => (toId = id));
+
+    document.getElementById("planButton").addEventListener("click", async () => {
+      const results = document.getElementById("planResults");
+      if (!getFromId() || !getToId()) {
+        results.innerHTML = '<p class="muted">Pick a "From" and "To" stop from the suggestion list first.</p>';
+        return;
+      }
+      results.textContent = "Looking for buses…";
+      try {
+        const arriveBy = document.getElementById("arriveByInput").value;
+        const url = `/api/plan?from=${encodeURIComponent(getFromId())}&to=${encodeURIComponent(getToId())}` +
+          (arriveBy ? `&arriveBy=${encodeURIComponent(arriveBy)}` : "");
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.itineraries || !data.itineraries.length) {
+          results.innerHTML = '<p class="muted">No trips found.</p>';
+          return;
+        }
+        results.innerHTML = data.itineraries
+          .map((it) => {
+            const legsHtml = it.legs
+              .map((leg) =>
+                leg.mode === "WALK"
+                  ? `<div class="leg walk">walk ${leg.walkMinutes} min to ${leg.to}</div>`
+                  : `<div class="leg">bus <strong>${leg.route}</strong> ${leg.from} (${leg.start}) &rarr; ${leg.to} (${leg.end})</div>`
+              )
+              .join("");
+            return `<div class="plan-option">
+              <strong>${it.start} &rarr; ${it.end}</strong> (${it.durationMin} min)
+              ${legsHtml}
+            </div>`;
+          })
+          .join("");
+      } catch (err) {
+        results.textContent = "Could not plan trip: " + err.message;
+      }
+    });
+
+    // ---- Route lookup ----
+
+    document.getElementById("routeButton").addEventListener("click", async () => {
+      const results = document.getElementById("routeResults");
+      const q = document.getElementById("routeInput").value.trim();
+      if (!q) return;
+      results.textContent = "Looking up route…";
+      try {
+        const res = await fetch("/api/route-stops?q=" + encodeURIComponent(q));
+        const data = await res.json();
+        if (!data.routes || !data.routes.length) {
+          results.innerHTML = '<p class="muted">No Tallinn route found with that number.</p>';
+          return;
+        }
+        results.innerHTML = data.routes
+          .map(
+            (r) => `<div class="route-block">
+              <strong>${r.mode === "TRAM" ? "Tram" : "Bus"} ${r.shortName}</strong> — ${r.longName}
+              ${r.directions
+                .map(
+                  (d) => `<div style="margin-top:8px;">
+                    <em>towards ${d.headsign}</em>
+                    <div class="stop-list">${d.stops.map((s) => s.name).join(" &rarr; ")}</div>
+                  </div>`
+                )
+                .join("")}
+            </div>`
+          )
+          .join("");
+      } catch (err) {
+        results.textContent = "Could not look up route: " + err.message;
+      }
+    });
   </script>
 </body>
 </html>
