@@ -95,6 +95,30 @@
     font-weight: 500;
   }
   .chip-active { background: linear-gradient(135deg, #ff5f6d, #a86ef7); color: #fff; }
+  .plan-pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    vertical-align: middle;
+  }
+  .plan-pill--pro {
+    background: linear-gradient(135deg, #ffd700, #ff9f43);
+    color: #3a2a00;
+    box-shadow: 0 0 10px rgba(255, 215, 0, 0.6);
+  }
+  .plan-pill--secret {
+    background: linear-gradient(135deg, #a86ef7, #6f42c1);
+    color: #fff;
+    box-shadow: 0 0 10px rgba(168, 110, 247, 0.6);
+  }
+  body.pro-active .card {
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2), 0 0 0 2px rgba(255, 215, 0, 0.6);
+  }
+  body.secret-active .card {
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2), 0 0 0 2px rgba(168, 110, 247, 0.6);
+  }
   .dino-overlay {
     position: fixed;
     inset: 0;
@@ -187,11 +211,13 @@
       <h2>🦕 No-internet game</h2>
       <p class="muted">Play full-screen. Space or tap to jump, Escape or ✕ to close.</p>
       <p class="muted" id="dinoProHint"></p>
+      <p class="muted" id="dinoBestScoreLine"></p>
       <button id="dinoStartButton" type="button">Play</button>
     </div>
 
     <div class="card">
       <h2>✨ Secret code</h2>
+      <p class="muted" id="planStatusLine"></p>
       <p class="muted">Know a code? Type it in. (This just unlocks fun stuff in your browser — it's not a real account or payment, anyone who asks for the code can use it.)</p>
       <div class="field">
         <input id="secretCodeInput" type="text" placeholder="Enter code" autocomplete="off">
@@ -228,16 +254,56 @@
       }
     }
 
+    function getFavoritesLimit() {
+      return isProMode() ? 10 : 6;
+    }
+
+    function renderBestScore() {
+      const line = document.getElementById("dinoBestScoreLine");
+      if (!isProMode()) {
+        line.textContent = "";
+        return;
+      }
+      let best = 0;
+      try {
+        best = Number(localStorage.getItem("dinoBestScore") || 0);
+      } catch {}
+      line.textContent = "🏆 Pro best score: " + best;
+    }
+
     function updatePlanBadge() {
-      document.getElementById("planBadge").textContent = isProMode() ? "⭐ Pro" : "";
+      const pro = isProMode();
+      const secret = isSecretMode();
+
+      document.getElementById("planBadge").innerHTML = pro
+        ? '<span class="plan-pill plan-pill--pro">⭐ PRO</span>'
+        : secret
+        ? '<span class="plan-pill plan-pill--secret">🔓 SECRET</span>'
+        : "";
+
+      document.body.classList.toggle("pro-active", pro);
+      document.body.classList.toggle("secret-active", !pro && secret);
+
+      const statusLine = document.getElementById("planStatusLine");
+      if (pro) {
+        statusLine.textContent =
+          "Current plan: ⭐ Pro — " + getFavoritesLimit() + " favorite stops, 4 trip options, a dino shield, and the jetpack finale.";
+      } else if (secret) {
+        statusLine.textContent = "Current plan: 🔓 Secret — the dino game has a couple of surprises.";
+      } else {
+        statusLine.textContent = "Current plan: Free";
+      }
+
       const hint = document.getElementById("dinoProHint");
-      if (isProMode()) {
-        hint.textContent = "⭐ Pro: crash and you'll get a special jetpack landing instead of a plain game over.";
-      } else if (isSecretMode()) {
+      if (pro) {
+        hint.textContent = "⭐ Pro: one shield to survive your first hit, then a jetpack landing when you finally crash.";
+      } else if (secret) {
         hint.textContent = "🔓 Secret mode active — something's different about the dino this time.";
       } else {
         hint.textContent = "";
       }
+
+      renderBestScore();
     }
 
     document.getElementById("secretCodeButton").addEventListener("click", () => {
@@ -626,7 +692,7 @@
       const favorites = loadFavorites();
       if (!favorites.some((f) => f.id === id)) {
         favorites.push({ id, name, routes: fromRoutes });
-        if (favorites.length > 6) favorites.shift();
+        if (favorites.length > getFavoritesLimit()) favorites.shift();
         saveFavoritesList(favorites);
         renderFavorites();
         renderStopTabs();
@@ -660,6 +726,7 @@
       let proMode = false;
       let secretMode = false;
       let player, obstacles, clouds, speed, score, running, lastTime, spawnTimer, finale;
+      let shieldUsed, shieldFlashT;
 
       function lerp(a, b, t) {
         return a + (b - a) * t;
@@ -690,6 +757,16 @@
         spawnTimer = 0;
         running = true;
         finale = null;
+        shieldUsed = false;
+        shieldFlashT = 0;
+      }
+
+      function saveBestScoreIfPro() {
+        if (!proMode) return;
+        try {
+          const best = Number(localStorage.getItem("dinoBestScore") || 0);
+          if (score > best) localStorage.setItem("dinoBestScore", String(Math.floor(score)));
+        } catch {}
       }
 
       function jump() {
@@ -766,6 +843,7 @@
         if (finale.t >= FINALE_TOTAL) {
           finale = null;
           running = false;
+          saveBestScoreIfPro();
         }
       }
 
@@ -812,6 +890,8 @@
         // frame rate, instead of jittering when frames are dropped.
         const step = dt / 16.6667;
 
+        if (shieldFlashT > 0) shieldFlashT = Math.max(0, shieldFlashT - dt);
+
         player.vy += 0.6 * scale * step;
         player.y += player.vy * step;
         if (player.y >= groundY) {
@@ -837,7 +917,13 @@
           const overlapX = playerX + playerSize > o.x && playerX < o.x + o.width;
           const overlapY = player.y < o.top + o.height && player.y + playerSize > o.top;
           if (overlapX && overlapY) {
-            if (proMode) {
+            if (proMode && !shieldUsed) {
+              // Pro gets one free hit per run: the shield absorbs this
+              // obstacle instead of ending the run.
+              shieldUsed = true;
+              shieldFlashT = 600;
+              obstacles = obstacles.filter((other) => other !== o);
+            } else if (proMode) {
               startFinale();
             } else {
               running = false;
@@ -884,12 +970,31 @@
         if (finale) {
           drawFinale();
         } else {
+          const runBob = running && !player.jumping ? Math.sin(performance.now() / 140) * 2 * scale : 0;
+          const dinoCenterX = playerX - 8 + playerSize * 0.5;
+          const dinoY = player.y + playerSize + runBob;
+
+          if (shieldFlashT > 0) {
+            ctx.strokeStyle = `rgba(86, 204, 242, ${0.4 + 0.4 * (shieldFlashT / 600)})`;
+            ctx.lineWidth = 4 * scale;
+            ctx.beginPath();
+            ctx.arc(dinoCenterX, dinoY - playerSize * 0.4, playerSize * 0.8, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+
+          ctx.save();
+          ctx.translate(dinoCenterX, dinoY);
+          // The 🦖 emoji faces left by default; flip it so it faces right,
+          // into the oncoming obstacles, like the original Chrome runner.
+          ctx.scale(-1, 1);
+          ctx.textAlign = "center";
           ctx.textBaseline = "alphabetic";
           ctx.font = Math.round(playerSize + 14 * scale) + "px serif";
-          const runBob = running && !player.jumping ? Math.sin(performance.now() / 140) * 2 * scale : 0;
           if (secretMode) ctx.filter = "hue-rotate(" + Math.round((performance.now() / 10) % 360) + "deg)";
-          ctx.fillText("🦖", playerX - 8, player.y + playerSize + runBob);
+          ctx.fillText("🦖", 0, 0);
           ctx.filter = "none";
+          ctx.restore();
+          ctx.textAlign = "left";
 
           for (const o of obstacles) {
             ctx.font = Math.round(o.height) + "px serif";
@@ -1019,6 +1124,7 @@
       function closeGame() {
         active = false;
         overlay.hidden = true;
+        updatePlanBadge();
       }
 
       startButton.addEventListener("click", openGame);
@@ -1040,4 +1146,3 @@
   </script>
 </body>
 </html>
- 
