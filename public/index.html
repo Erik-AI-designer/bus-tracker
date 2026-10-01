@@ -79,7 +79,22 @@
     color: #24292e;
     font-weight: 500;
   }
-  #dinoCanvas { width: 100%; max-width: 600px; background: #f7f7f7; border-radius: 8px; touch-action: none; display: block; }
+  .chip-active { background: linear-gradient(135deg, #ff5f6d, #a86ef7); color: #fff; }
+  .dino-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: #000;
+  }
+  .dino-overlay[hidden] { display: none; }
+  #dinoCanvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  .dino-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: #ffffffdd;
+    color: #24292e;
+  }
 
   /* Tablet and up: two columns */
   @media (min-width: 700px) {
@@ -106,6 +121,10 @@
       <h1>Bus Tracker</h1>
       <button id="refresh">Refresh</button>
       <p class="updated" id="updated"></p>
+
+      <div class="chip-row" id="stopTabs"></div>
+      <div id="stopBoard"></div>
+
       <div class="field">
         <label>School arrival time</label>
         <input id="schoolArrivalInput" type="time">
@@ -151,10 +170,14 @@
 
     <div class="card" id="dinoCard">
       <h2>🦕 No-internet game</h2>
-      <p class="muted">Space, tap, or click to jump over the cactus.</p>
-      <canvas id="dinoCanvas" width="600" height="150"></canvas>
-      <button id="dinoStartButton" type="button" style="margin-top: 8px;">Play</button>
+      <p class="muted">Play full-screen. Space or tap to jump, Escape or ✕ to close.</p>
+      <button id="dinoStartButton" type="button">Play</button>
     </div>
+  </div>
+
+  <div id="dinoOverlay" class="dino-overlay" hidden>
+    <canvas id="dinoCanvas"></canvas>
+    <button id="dinoCloseButton" class="dino-close" type="button">✕ Close</button>
   </div>
 
   <script>
@@ -183,12 +206,7 @@
         return;
       }
 
-      let html = "";
-
-      html += renderStop("Hämar tee", data.hamarTee);
-      html += renderStop("Lillepi", data.lillepi);
-
-      html += "<h2>School trip plan</h2>";
+      let html = "<h2>School trip plan</h2>";
       for (const opt of data.plan) {
         if (opt.status) {
           html += `<div class="plan-option">${opt.status}</div>`;
@@ -217,6 +235,61 @@
       return html;
     }
 
+    // ---- Favorite stop tabs on the main board ----
+
+    let activeStopId = null;
+
+    function renderStopTabs() {
+      const favorites = loadFavorites();
+      const tabs = document.getElementById("stopTabs");
+      const board = document.getElementById("stopBoard");
+
+      if (!favorites.length) {
+        tabs.innerHTML = "";
+        board.innerHTML = '<p class="muted">Save a favorite stop in "Plan a different trip" below to see its live departures here.</p>';
+        return;
+      }
+
+      if (!activeStopId || !favorites.some((f) => f.id === activeStopId)) {
+        activeStopId = favorites[0].id;
+      }
+
+      tabs.innerHTML = favorites
+        .map(
+          (f) =>
+            `<button type="button" class="chip${f.id === activeStopId ? " chip-active" : ""}" data-id="${f.id}">${f.name}</button>`
+        )
+        .join("");
+
+      loadStopBoard();
+    }
+
+    async function loadStopBoard() {
+      const board = document.getElementById("stopBoard");
+      const favorite = loadFavorites().find((f) => f.id === activeStopId);
+      if (!favorite || !favorite.routes || !favorite.routes.length) {
+        board.innerHTML = '<p class="muted">No routes known for this stop.</p>';
+        return;
+      }
+      board.textContent = "Loading…";
+      try {
+        const res = await fetch(
+          `/api/stop-departures?id=${encodeURIComponent(favorite.id)}&routes=${encodeURIComponent(favorite.routes.join(","))}`
+        );
+        const data = await res.json();
+        board.innerHTML = renderStop(favorite.name, data.departures);
+      } catch (err) {
+        board.textContent = "Could not load departures: " + err.message;
+      }
+    }
+
+    document.getElementById("stopTabs").addEventListener("click", (e) => {
+      const chip = e.target.closest(".chip");
+      if (!chip) return;
+      activeStopId = chip.dataset.id;
+      renderStopTabs();
+    });
+
     const schoolArrivalInput = document.getElementById("schoolArrivalInput");
     try {
       schoolArrivalInput.value = localStorage.getItem("schoolArrivalTime") || "08:00";
@@ -239,11 +312,13 @@
       const input = document.getElementById(inputId);
       const box = document.getElementById(suggestionsId);
       let selectedId = null;
+      let selectedRoutes = [];
       let debounceTimer = null;
 
       input.addEventListener("input", () => {
         selectedId = null;
-        onSelect(null);
+        selectedRoutes = [];
+        onSelect(null, []);
         clearTimeout(debounceTimer);
         const q = input.value.trim();
         if (q.length < 2) {
@@ -257,7 +332,7 @@
             box.innerHTML = data.stops
               .map(
                 (s) =>
-                  `<div class="suggestion-item" data-id="${s.id}" data-name="${s.name.replace(/"/g, "&quot;")}">
+                  `<div class="suggestion-item" data-id="${s.id}" data-name="${s.name.replace(/"/g, "&quot;")}" data-routes="${s.routes.join(",")}">
                     ${s.name}
                     <small>${s.routes.slice(0, 8).join(", ")}</small>
                   </div>`
@@ -274,8 +349,9 @@
         if (!item || !item.dataset.id) return;
         input.value = item.dataset.name;
         selectedId = item.dataset.id;
+        selectedRoutes = item.dataset.routes ? item.dataset.routes.split(",") : [];
         box.innerHTML = "";
-        onSelect(selectedId);
+        onSelect(selectedId, selectedRoutes);
       });
 
       document.addEventListener("click", (e) => {
@@ -287,7 +363,11 @@
 
     let fromId = null;
     let toId = null;
-    const getFromId = setupStopSearch("fromInput", "fromSuggestions", (id) => (fromId = id));
+    let fromRoutes = [];
+    const getFromId = setupStopSearch("fromInput", "fromSuggestions", (id, routes) => {
+      fromId = id;
+      fromRoutes = routes || [];
+    });
     const getToId = setupStopSearch("toInput", "toSuggestions", (id) => (toId = id));
 
     document.getElementById("useLocationButton").addEventListener("click", () => {
@@ -315,7 +395,7 @@
             box.innerHTML = data.stops
               .map(
                 (s) =>
-                  `<div class="suggestion-item" data-id="${s.id}" data-name="${s.name.replace(/"/g, "&quot;")}">
+                  `<div class="suggestion-item" data-id="${s.id}" data-name="${s.name.replace(/"/g, "&quot;")}" data-routes="${s.routes.join(",")}">
                     ${s.name} — ${s.distance} m
                     <small>${s.routes.slice(0, 8).join(", ")}</small>
                   </div>`
@@ -425,7 +505,7 @@
         ? favorites
             .map(
               (f) =>
-                `<button type="button" class="chip" data-id="${f.id}" data-name="${f.name.replace(/"/g, "&quot;")}">${f.name}</button>`
+                `<button type="button" class="chip" data-id="${f.id}" data-name="${f.name.replace(/"/g, "&quot;")}" data-routes="${(f.routes || []).join(",")}">${f.name}</button>`
             )
             .join("")
         : '<p class="muted">No favorite stops saved yet.</p>';
@@ -436,6 +516,7 @@
       if (!chip) return;
       document.getElementById("fromInput").value = chip.dataset.name;
       fromId = chip.dataset.id;
+      fromRoutes = chip.dataset.routes ? chip.dataset.routes.split(",") : [];
     });
 
     document.getElementById("saveFavoriteButton").addEventListener("click", () => {
@@ -447,35 +528,48 @@
       const name = document.getElementById("fromInput").value;
       const favorites = loadFavorites();
       if (!favorites.some((f) => f.id === id)) {
-        favorites.push({ id, name });
+        favorites.push({ id, name, routes: fromRoutes });
         if (favorites.length > 6) favorites.shift();
         saveFavoritesList(favorites);
         renderFavorites();
+        renderStopTabs();
       }
     });
 
     renderFavorites();
+    renderStopTabs();
 
     // ---- No-internet dinosaur game ----
 
     (function setupDinoGame() {
       const canvas = document.getElementById("dinoCanvas");
       const ctx = canvas.getContext("2d");
+      const overlay = document.getElementById("dinoOverlay");
       const startButton = document.getElementById("dinoStartButton");
-      const groundY = 120;
-      const playerSize = 24;
+      const closeButton = document.getElementById("dinoCloseButton");
+      const playerSize = 32;
+      const playerX = 50;
 
+      let groundY = 300;
+      let active = false;
       let player, obstacles, clouds, speed, score, running, lastTime, spawnTimer;
+
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        groundY = canvas.height - 90;
+        if (player && !player.jumping) player.y = groundY;
+      }
 
       function reset() {
         player = { y: groundY, vy: 0, jumping: false };
         obstacles = [];
         clouds = [
-          { x: 80, y: 25 },
-          { x: 260, y: 45 },
-          { x: 440, y: 20 },
+          { x: canvas.width * 0.15, y: 60 },
+          { x: canvas.width * 0.5, y: 100 },
+          { x: canvas.width * 0.85, y: 50 },
         ];
-        speed = 4;
+        speed = 6;
         score = 0;
         spawnTimer = 0;
         running = true;
@@ -489,13 +583,50 @@
           return;
         }
         if (!player.jumping) {
-          player.vy = -10;
+          player.vy = -14;
           player.jumping = true;
         }
       }
 
+      function spawnObstacle() {
+        const groundLine = groundY + playerSize;
+        const roll = Math.random();
+        if (roll < 0.25 && score > 15) {
+          const flightOffsets = [90, 150, 210];
+          const offset = flightOffsets[Math.floor(Math.random() * flightOffsets.length)];
+          obstacles.push({
+            type: "pterodactyl",
+            emoji: "🦅",
+            x: canvas.width,
+            width: 40,
+            height: 30,
+            top: groundLine - offset,
+          });
+        } else if (roll < 0.55) {
+          const height = 60;
+          obstacles.push({
+            type: "cactus",
+            emoji: "🌵🌵",
+            x: canvas.width,
+            width: 46,
+            height,
+            top: groundLine - height,
+          });
+        } else {
+          const height = 36;
+          obstacles.push({
+            type: "cactus",
+            emoji: "🌵",
+            x: canvas.width,
+            width: 22,
+            height,
+            top: groundLine - height,
+          });
+        }
+      }
+
       function update(dt) {
-        player.vy += 0.5;
+        player.vy += 0.6;
         player.y += player.vy;
         if (player.y >= groundY) {
           player.y = groundY;
@@ -505,8 +636,8 @@
 
         spawnTimer -= dt;
         if (spawnTimer <= 0) {
-          obstacles.push({ x: canvas.width, width: 14, height: 30 + Math.random() * 20 });
-          spawnTimer = 800 + Math.random() * 800;
+          spawnObstacle();
+          spawnTimer = 900 + Math.random() * 700;
         }
         for (const o of obstacles) o.x -= speed;
         obstacles = obstacles.filter((o) => o.x + o.width > 0);
@@ -516,21 +647,14 @@
           if (c.x < -40) c.x = canvas.width + 40;
         }
 
-        const playerX = 40;
-        const groundLine = groundY + playerSize;
         for (const o of obstacles) {
-          const obstacleTop = groundLine - o.height;
-          if (
-            playerX + playerSize > o.x &&
-            playerX < o.x + o.width &&
-            player.y + playerSize > obstacleTop
-          ) {
-            running = false;
-          }
+          const overlapX = playerX + playerSize > o.x && playerX < o.x + o.width;
+          const overlapY = player.y < o.top + o.height && player.y + playerSize > o.top;
+          if (overlapX && overlapY) running = false;
         }
 
         score += dt * 0.01;
-        speed = 4 + score / 200;
+        speed = 6 + score / 150;
       }
 
       function draw() {
@@ -544,53 +668,54 @@
 
         ctx.fillStyle = "#ffe066";
         ctx.beginPath();
-        ctx.arc(canvas.width - 45, 30, 16, 0, Math.PI * 2);
+        ctx.arc(canvas.width - 70, 60, 28, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = "#ffffffcc";
         for (const c of clouds) {
           ctx.beginPath();
-          ctx.ellipse(c.x, c.y, 18, 9, 0, 0, Math.PI * 2);
-          ctx.ellipse(c.x + 14, c.y + 3, 13, 7, 0, 0, Math.PI * 2);
+          ctx.ellipse(c.x, c.y, 26, 13, 0, 0, Math.PI * 2);
+          ctx.ellipse(c.x + 20, c.y + 4, 19, 10, 0, 0, Math.PI * 2);
           ctx.fill();
         }
 
         ctx.fillStyle = "#c2a878";
         ctx.fillRect(0, groundLine, canvas.width, canvas.height - groundLine);
         ctx.strokeStyle = "#8a6d3b";
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 3;
         ctx.beginPath();
         ctx.moveTo(0, groundLine);
         ctx.lineTo(canvas.width, groundLine);
         ctx.stroke();
 
         ctx.textBaseline = "alphabetic";
-        ctx.font = (playerSize + 10) + "px serif";
-        ctx.fillText("🦖", 34, player.y + playerSize + 6);
+        ctx.font = (playerSize + 14) + "px serif";
+        ctx.fillText("🦖", playerX - 8, player.y + playerSize + 8);
 
-        ctx.font = "26px serif";
         for (const o of obstacles) {
-          ctx.fillText("🌵", o.x - 6, groundLine + 2);
+          ctx.font = Math.round(o.height) + "px serif";
+          ctx.fillText(o.emoji, o.x, o.top + o.height);
         }
 
         ctx.fillStyle = "#24292e";
-        ctx.font = "bold 15px sans-serif";
-        ctx.fillText("Score: " + Math.floor(score), canvas.width - 108, 22);
+        ctx.font = "bold 20px sans-serif";
+        ctx.fillText("Score: " + Math.floor(score), canvas.width - 170, 36);
 
         if (!running) {
           ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.fillStyle = "#fff";
           ctx.textAlign = "center";
-          ctx.font = "bold 18px sans-serif";
-          ctx.fillText("Game over!", canvas.width / 2, canvas.height / 2 - 8);
-          ctx.font = "14px sans-serif";
-          ctx.fillText("Space, tap, or click to restart", canvas.width / 2, canvas.height / 2 + 16);
+          ctx.font = "bold 28px sans-serif";
+          ctx.fillText("Game over!", canvas.width / 2, canvas.height / 2 - 14);
+          ctx.font = "18px sans-serif";
+          ctx.fillText("Space, tap, or click to restart", canvas.width / 2, canvas.height / 2 + 20);
           ctx.textAlign = "left";
         }
       }
 
       function loop(time) {
+        if (!active) return;
         const dt = lastTime ? time - lastTime : 16;
         lastTime = time;
         if (running) update(dt);
@@ -598,21 +723,35 @@
         if (running) requestAnimationFrame(loop);
       }
 
-      startButton.addEventListener("click", () => {
+      function openGame() {
+        overlay.hidden = false;
+        active = true;
+        resizeCanvas();
         reset();
         lastTime = null;
         requestAnimationFrame(loop);
-      });
+      }
+
+      function closeGame() {
+        active = false;
+        overlay.hidden = true;
+      }
+
+      startButton.addEventListener("click", openGame);
+      closeButton.addEventListener("click", closeGame);
       canvas.addEventListener("click", jump);
+      window.addEventListener("resize", () => {
+        if (!overlay.hidden) resizeCanvas();
+      });
       document.addEventListener("keydown", (e) => {
+        if (overlay.hidden) return;
         if (e.code === "Space") {
           e.preventDefault();
           jump();
+        } else if (e.code === "Escape") {
+          closeGame();
         }
       });
-
-      reset();
-      draw();
     })();
   </script>
 </body>
