@@ -119,6 +119,26 @@
   body.secret-active .card {
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2), 0 0 0 2px rgba(168, 110, 247, 0.6);
   }
+  .plan-pill--admin {
+    background: linear-gradient(135deg, #ff6b6b, #c92a2a);
+    color: #fff;
+    box-shadow: 0 0 10px rgba(201, 42, 42, 0.6);
+  }
+  body.admin-active .card {
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2), 0 0 0 2px rgba(201, 42, 42, 0.6);
+  }
+  .admin-user-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #0001;
+  }
+  .admin-user-row:last-child { border-bottom: none; }
+  .admin-user-name { font-weight: 600; }
+  .admin-user-activity { font-size: 0.8rem; opacity: 0.7; }
+  .admin-crown { color: #c92a2a; }
   .dino-overlay {
     position: fixed;
     inset: 0;
@@ -225,6 +245,12 @@
       <button id="secretCodeButton" type="button">Unlock</button>
       <p class="muted" id="secretCodeStatus"></p>
     </div>
+
+    <div class="card card--wide" id="adminCard" hidden>
+      <h2>🛡️ Admin panel</h2>
+      <p class="muted">For fun only — these are made-up example people, not real visitors to the site. Nothing here is tracked or real.</p>
+      <div id="adminUserList"></div>
+    </div>
   </div>
 
   <div id="dinoOverlay" class="dino-overlay" hidden>
@@ -237,6 +263,7 @@
 
     const PRO_CODE = "sonic77";
     const SECRET_CODE = "ErikBlaster007";
+    const ADMIN_CODE = "fD.xB.8248Bq@xC8Beh8HPVZPkMEW@4ieeMVdgQ!";
 
     function isProMode() {
       try {
@@ -249,6 +276,14 @@
     function isSecretMode() {
       try {
         return localStorage.getItem("secretMode") === "true";
+      } catch {
+        return false;
+      }
+    }
+
+    function isAdminMode() {
+      try {
+        return localStorage.getItem("adminMode") === "true";
       } catch {
         return false;
       }
@@ -271,28 +306,103 @@
       line.textContent = "🏆 Pro best score: " + best;
     }
 
+    // ---- Pretend "admin panel" — entirely made-up example people, for fun
+    // only. Nothing here is a real visitor, nothing is tracked. ----
+
+    const MOCK_USER_NAMES = [
+      "BusFan99", "CactusKid", "T_Rex_Driver", "TallinnTransit", "SchoolRunPro",
+      "LillepiLocal", "NightBusNiko", "RouteReader", "StopWatcher", "PeatusPal",
+    ];
+    const MOCK_ACTIVITIES = [
+      "checking Bus 8 departures",
+      "playing the dino game",
+      "looking up route 34",
+      "searching for a stop",
+      "planning a trip to Lillepi",
+      "idle on the home page",
+      "saving a favorite stop",
+      "just unlocked Secret mode",
+    ];
+
+    function loadMockUsers() {
+      try {
+        const saved = JSON.parse(localStorage.getItem("mockUsers") || "null");
+        if (saved) return saved;
+      } catch {}
+      const users = MOCK_USER_NAMES.map((name) => ({
+        name,
+        activity: MOCK_ACTIVITIES[Math.floor(Math.random() * MOCK_ACTIVITIES.length)],
+        isAdmin: false,
+      }));
+      try {
+        localStorage.setItem("mockUsers", JSON.stringify(users));
+      } catch {}
+      return users;
+    }
+
+    function saveMockUsers(users) {
+      try {
+        localStorage.setItem("mockUsers", JSON.stringify(users));
+      } catch {}
+    }
+
+    function renderAdminPanel() {
+      const card = document.getElementById("adminCard");
+      if (!isAdminMode()) {
+        card.hidden = true;
+        return;
+      }
+      card.hidden = false;
+      const users = loadMockUsers();
+      const list = document.getElementById("adminUserList");
+      list.innerHTML = users
+        .map(
+          (u, i) => `<div class="admin-user-row">
+            <div>
+              <span class="admin-user-name">${u.isAdmin ? '<span class="admin-crown">👑</span> ' : ""}${u.name}</span>
+              <div class="admin-user-activity">${u.activity}</div>
+            </div>
+            <button type="button" class="secondary-button admin-toggle-button" data-index="${i}">
+              ${u.isAdmin ? "Remove admin" : "Make admin"}
+            </button>
+          </div>`
+        )
+        .join("");
+    }
+
+    document.getElementById("adminUserList").addEventListener("click", (e) => {
+      const button = e.target.closest(".admin-toggle-button");
+      if (!button) return;
+      const users = loadMockUsers();
+      const i = Number(button.dataset.index);
+      users[i].isAdmin = !users[i].isAdmin;
+      saveMockUsers(users);
+      renderAdminPanel();
+    });
+
     function updatePlanBadge() {
       const pro = isProMode();
       const secret = isSecretMode();
+      const admin = isAdminMode();
 
-      document.getElementById("planBadge").innerHTML = pro
+      document.getElementById("planBadge").innerHTML = admin
+        ? '<span class="plan-pill plan-pill--admin">🛡️ ADMIN</span>'
+        : pro
         ? '<span class="plan-pill plan-pill--pro">⭐ PRO</span>'
         : secret
         ? '<span class="plan-pill plan-pill--secret">🔓 SECRET</span>'
         : "";
 
-      document.body.classList.toggle("pro-active", pro);
-      document.body.classList.toggle("secret-active", !pro && secret);
+      document.body.classList.toggle("admin-active", admin);
+      document.body.classList.toggle("pro-active", !admin && pro);
+      document.body.classList.toggle("secret-active", !admin && !pro && secret);
 
       const statusLine = document.getElementById("planStatusLine");
-      if (pro) {
-        statusLine.textContent =
-          "Current plan: ⭐ Pro — " + getFavoritesLimit() + " favorite stops, 4 trip options, a dino shield, and the jetpack finale.";
-      } else if (secret) {
-        statusLine.textContent = "Current plan: 🔓 Secret — the dino game has a couple of surprises.";
-      } else {
-        statusLine.textContent = "Current plan: Free";
-      }
+      const parts = [];
+      if (pro) parts.push("⭐ Pro");
+      if (secret) parts.push("🔓 Secret");
+      if (admin) parts.push("🛡️ Admin");
+      statusLine.textContent = parts.length ? "Current plan: " + parts.join(", ") : "Current plan: Free";
 
       const hint = document.getElementById("dinoProHint");
       if (pro) {
@@ -304,6 +414,7 @@
       }
 
       renderBestScore();
+      renderAdminPanel();
     }
 
     document.getElementById("secretCodeButton").addEventListener("click", () => {
@@ -322,6 +433,11 @@
           localStorage.setItem("secretMode", "true");
         } catch {}
         status.textContent = "🔓 Secret mode unlocked! Go play the dino game.";
+      } else if (code === ADMIN_CODE) {
+        try {
+          localStorage.setItem("adminMode", "true");
+        } catch {}
+        status.textContent = "🛡️ Admin panel unlocked below! (Reminder: it's all made-up example data, just for fun.)";
       } else {
         status.textContent = "That's not a real code.";
       }
@@ -735,9 +851,6 @@
       function resizeCanvas() {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-        // Scale everything to the screen size so the playable area looks right
-        // on both a small phone and a huge desktop monitor, instead of a tiny
-        // strip of ground under a mostly-empty sky.
         scale = Math.min(2, Math.max(0.9, Math.min(canvas.width, canvas.height) / 500));
         playerSize = BASE_PLAYER_SIZE * scale;
         groundY = canvas.height - 130 * scale;
@@ -771,17 +884,11 @@
 
       function jump() {
         if (finale) {
-          // Let an impatient player skip straight to the restart prompt
-          // instead of sitting through the whole landing sequence.
           finale = null;
           running = false;
           return;
         }
         if (!running) {
-          // The main loop (started in openGame) is already ticking every
-          // frame regardless of `running` — just reset the state here.
-          // Starting another requestAnimationFrame chain on top of it was
-          // the bug that made restarts run the physics twice as fast.
           reset();
           return;
         }
@@ -796,9 +903,6 @@
         finale = { t: 0, x0: playerX, y0: player.y, particles: [] };
       }
 
-      // Where the dino is during the Pro "jetpack landing" cutscene: flies
-      // up, rotates through 118° then on to 180° while cruising, levels
-      // back out, and lands standing on the #1 podium block.
       function finalePosition(t) {
         const groundLine = groundY + playerSize;
         const goldHeight = 110 * scale;
@@ -826,7 +930,6 @@
         }
         if (t < descendEnd) {
           const p = (t - cruiseEnd) / FINALE_DESCEND;
-          // 180 -> 360 reads as leveling back out to upright (360 === 0).
           return { x: lerp(x2, landX, p), y: lerp(y2, landY, p), angle: lerp(180, 360, p), phase: "fly" };
         }
         return { x: landX, y: landY, angle: 0, phase: "podium" };
@@ -885,9 +988,6 @@
       }
 
       function update(dt) {
-        // Normalize movement to elapsed time (steps of 60fps) so the game
-        // runs at the same speed and looks smooth no matter the actual
-        // frame rate, instead of jittering when frames are dropped.
         const step = dt / 16.6667;
 
         if (shieldFlashT > 0) shieldFlashT = Math.max(0, shieldFlashT - dt);
@@ -918,8 +1018,6 @@
           const overlapY = player.y < o.top + o.height && player.y + playerSize > o.top;
           if (overlapX && overlapY) {
             if (proMode && !shieldUsed) {
-              // Pro gets one free hit per run: the shield absorbs this
-              // obstacle instead of ending the run.
               shieldUsed = true;
               shieldFlashT = 600;
               obstacles = obstacles.filter((other) => other !== o);
@@ -984,8 +1082,6 @@
 
           ctx.save();
           ctx.translate(dinoCenterX, dinoY);
-          // The 🦖 emoji faces left by default; flip it so it faces right,
-          // into the oncoming obstacles, like the original Chrome runner.
           ctx.scale(-1, 1);
           ctx.textAlign = "center";
           ctx.textBaseline = "alphabetic";
@@ -1104,9 +1200,6 @@
           update(dt);
         }
         draw();
-        // Always keep this single chain alive (while the overlay is open),
-        // even on game-over — it still needs to redraw, and a restart
-        // should never spin up a second, overlapping loop.
         requestAnimationFrame(loop);
       }
 
