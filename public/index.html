@@ -119,26 +119,58 @@
   body.secret-active .card {
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2), 0 0 0 2px rgba(168, 110, 247, 0.6);
   }
-  .plan-pill--admin {
+  .plan-pill--super {
     background: linear-gradient(135deg, #ff6b6b, #c92a2a);
     color: #fff;
     box-shadow: 0 0 10px rgba(201, 42, 42, 0.6);
   }
-  body.admin-active .card {
+  body.super-active .card {
     box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2), 0 0 0 2px rgba(201, 42, 42, 0.6);
   }
-  .admin-user-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 8px 0;
-    border-bottom: 1px solid #0001;
+  .creator-pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    background: #c92a2a;
+    color: #fff;
+    vertical-align: middle;
+    margin-left: 4px;
   }
-  .admin-user-row:last-child { border-bottom: none; }
-  .admin-user-name { font-weight: 600; }
-  .admin-user-activity { font-size: 0.8rem; opacity: 0.7; }
-  .admin-crown { color: #c92a2a; }
+  .chat-thread {
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid #0002;
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  .chat-message { margin-bottom: 8px; font-size: 0.9rem; }
+  .chat-message--erik { color: #c92a2a; }
+  .inbox-row {
+    padding: 8px;
+    border-bottom: 1px solid #0001;
+    cursor: pointer;
+    border-radius: 6px;
+  }
+  .inbox-row:hover { background: #0000000d; }
+  .dino-command-box {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    background: #ffffffdd;
+    border-radius: 8px;
+    padding: 8px;
+    display: flex;
+    gap: 6px;
+  }
+  .dino-command-box input {
+    padding: 6px 8px;
+    border-radius: 6px;
+    border: 1px solid #0003;
+    width: 160px;
+  }
   .dino-overlay {
     position: fixed;
     inset: 0;
@@ -177,7 +209,7 @@
 <body>
   <div class="page">
     <div class="card card--wide">
-      <h1>Bus Tracker <span id="planBadge" style="font-size: 0.85rem; font-weight: 600; opacity: 0.8;"></span></h1>
+      <h1>Bus Tracker <span id="planBadge" style="font-size: 0.85rem; font-weight: 600; opacity: 0.8;"></span><span id="creatorBadge"></span></h1>
       <button id="refresh">Refresh</button>
       <p class="updated" id="updated"></p>
 
@@ -246,16 +278,53 @@
       <p class="muted" id="secretCodeStatus"></p>
     </div>
 
-    <div class="card card--wide" id="adminCard" hidden>
-      <h2>🛡️ Admin panel</h2>
-      <p class="muted">For fun only — these are made-up example people, not real visitors to the site. Nothing here is tracked or real.</p>
-      <div id="adminUserList"></div>
+    <div class="card">
+      <h2>💬 Chat with Erik</h2>
+      <p class="muted">Leave a message — Erik can read it and write back. (Messages are stored so he can reply later; refresh to check for a reply.)</p>
+      <p class="muted"><strong>Only Erik can log in to answer chat</strong> — this box is just for sending him a message, not for logging in yourself.</p>
+      <div class="chat-thread" id="chatMessages"></div>
+      <form id="chatForm">
+        <div class="field">
+          <input id="chatInput" type="text" placeholder="Type a message…" autocomplete="off">
+        </div>
+        <button type="submit">Send</button>
+        <button type="button" id="chatRefreshButton" class="secondary-button">Refresh</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>🔑 Creator login</h2>
+      <p class="muted">Only Erik can log in to answer messages.</p>
+      <form id="creatorLoginForm">
+        <div class="field">
+          <input id="creatorPasswordInput" type="password" placeholder="Creator password" autocomplete="off">
+        </div>
+        <button type="submit">Log in</button>
+      </form>
+      <button type="button" id="creatorLogoutButton" class="secondary-button" hidden>Log out</button>
+      <p class="muted" id="creatorLoginStatus"></p>
+    </div>
+
+    <div class="card card--wide" id="creatorInboxCard" hidden>
+      <h2>📥 Creator inbox</h2>
+      <p class="muted">All conversations from visitors. Click one to read and reply.</p>
+      <div id="inboxList"></div>
+      <div class="chat-thread" id="inboxMessages"></div>
+      <form id="inboxReplyForm" hidden>
+        <div class="field">
+          <input id="inboxReplyInput" type="text" placeholder="Reply as Erik…" autocomplete="off">
+        </div>
+        <button type="submit">Reply</button>
+      </form>
     </div>
   </div>
 
   <div id="dinoOverlay" class="dino-overlay" hidden>
     <canvas id="dinoCanvas"></canvas>
     <button id="dinoCloseButton" class="dino-close" type="button">✕ Close</button>
+    <form id="dinoCommandForm" class="dino-command-box" hidden>
+      <input id="dinoCommandInput" type="text" placeholder='Type "Alexey" or "Done"' autocomplete="off">
+    </form>
   </div>
 
   <script>
@@ -263,7 +332,7 @@
 
     const PRO_CODE = "sonic77";
     const SECRET_CODE = "ErikBlaster007";
-    const ADMIN_CODE = "fD.xB.8248Bq@xC8Beh8HPVZPkMEW@4ieeMVdgQ!";
+    const SUPER_CODE = "Super Erik Plan";
 
     function isProMode() {
       try {
@@ -281,9 +350,9 @@
       }
     }
 
-    function isAdminMode() {
+    function isSuperMode() {
       try {
-        return localStorage.getItem("adminMode") === "true";
+        return localStorage.getItem("superMode") === "true";
       } catch {
         return false;
       }
@@ -295,7 +364,7 @@
 
     function renderBestScore() {
       const line = document.getElementById("dinoBestScoreLine");
-      if (!isProMode()) {
+      if (!isProMode() && !isSuperMode()) {
         line.textContent = "";
         return;
       }
@@ -303,109 +372,37 @@
       try {
         best = Number(localStorage.getItem("dinoBestScore") || 0);
       } catch {}
-      line.textContent = "🏆 Pro best score: " + best;
+      line.textContent = "🏆 Best score: " + best;
     }
-
-    // ---- Pretend "admin panel" — entirely made-up example people, for fun
-    // only. Nothing here is a real visitor, nothing is tracked. ----
-
-    const MOCK_USER_NAMES = [
-      "BusFan99", "CactusKid", "T_Rex_Driver", "TallinnTransit", "SchoolRunPro",
-      "LillepiLocal", "NightBusNiko", "RouteReader", "StopWatcher", "PeatusPal",
-    ];
-    const MOCK_ACTIVITIES = [
-      "checking Bus 8 departures",
-      "playing the dino game",
-      "looking up route 34",
-      "searching for a stop",
-      "planning a trip to Lillepi",
-      "idle on the home page",
-      "saving a favorite stop",
-      "just unlocked Secret mode",
-    ];
-
-    function loadMockUsers() {
-      try {
-        const saved = JSON.parse(localStorage.getItem("mockUsers") || "null");
-        if (saved) return saved;
-      } catch {}
-      const users = MOCK_USER_NAMES.map((name) => ({
-        name,
-        activity: MOCK_ACTIVITIES[Math.floor(Math.random() * MOCK_ACTIVITIES.length)],
-        isAdmin: false,
-      }));
-      try {
-        localStorage.setItem("mockUsers", JSON.stringify(users));
-      } catch {}
-      return users;
-    }
-
-    function saveMockUsers(users) {
-      try {
-        localStorage.setItem("mockUsers", JSON.stringify(users));
-      } catch {}
-    }
-
-    function renderAdminPanel() {
-      const card = document.getElementById("adminCard");
-      if (!isAdminMode()) {
-        card.hidden = true;
-        return;
-      }
-      card.hidden = false;
-      const users = loadMockUsers();
-      const list = document.getElementById("adminUserList");
-      list.innerHTML = users
-        .map(
-          (u, i) => `<div class="admin-user-row">
-            <div>
-              <span class="admin-user-name">${u.isAdmin ? '<span class="admin-crown">👑</span> ' : ""}${u.name}</span>
-              <div class="admin-user-activity">${u.activity}</div>
-            </div>
-            <button type="button" class="secondary-button admin-toggle-button" data-index="${i}">
-              ${u.isAdmin ? "Remove admin" : "Make admin"}
-            </button>
-          </div>`
-        )
-        .join("");
-    }
-
-    document.getElementById("adminUserList").addEventListener("click", (e) => {
-      const button = e.target.closest(".admin-toggle-button");
-      if (!button) return;
-      const users = loadMockUsers();
-      const i = Number(button.dataset.index);
-      users[i].isAdmin = !users[i].isAdmin;
-      saveMockUsers(users);
-      renderAdminPanel();
-    });
 
     function updatePlanBadge() {
       const pro = isProMode();
       const secret = isSecretMode();
-      const admin = isAdminMode();
+      const superMode = isSuperMode();
 
-      document.getElementById("planBadge").innerHTML = admin
-        ? '<span class="plan-pill plan-pill--admin">🛡️ ADMIN</span>'
+      document.getElementById("planBadge").innerHTML = superMode
+        ? '<span class="plan-pill plan-pill--super">👑 SUPER</span>'
         : pro
         ? '<span class="plan-pill plan-pill--pro">⭐ PRO</span>'
         : secret
         ? '<span class="plan-pill plan-pill--secret">🔓 SECRET</span>'
         : "";
 
-      document.body.classList.toggle("admin-active", admin);
-      document.body.classList.toggle("pro-active", !admin && pro);
-      document.body.classList.toggle("secret-active", !admin && !pro && secret);
+      document.body.classList.toggle("super-active", superMode);
+      document.body.classList.toggle("pro-active", !superMode && pro);
+      document.body.classList.toggle("secret-active", !superMode && !pro && secret);
 
       const statusLine = document.getElementById("planStatusLine");
       const parts = [];
       if (pro) parts.push("⭐ Pro");
       if (secret) parts.push("🔓 Secret");
-      if (admin) parts.push("🛡️ Admin");
+      if (superMode) parts.push("👑 Super Erik Plan");
       statusLine.textContent = parts.length ? "Current plan: " + parts.join(", ") : "Current plan: Free";
 
       const hint = document.getElementById("dinoProHint");
-      if (pro) {
+      if (superMode) {
+        hint.textContent = '👑 Super Erik Plan: 100 shields. Type "Alexey" in the game to fly free, "Done" to land.';
+      } else if (pro) {
         hint.textContent = "⭐ Pro: one shield to survive your first hit, then a jetpack landing when you finally crash.";
       } else if (secret) {
         hint.textContent = "🔓 Secret mode active — something's different about the dino this time.";
@@ -414,7 +411,6 @@
       }
 
       renderBestScore();
-      renderAdminPanel();
     }
 
     document.getElementById("secretCodeButton").addEventListener("click", () => {
@@ -433,11 +429,11 @@
           localStorage.setItem("secretMode", "true");
         } catch {}
         status.textContent = "🔓 Secret mode unlocked! Go play the dino game.";
-      } else if (code === ADMIN_CODE) {
+      } else if (code === SUPER_CODE) {
         try {
-          localStorage.setItem("adminMode", "true");
+          localStorage.setItem("superMode", "true");
         } catch {}
-        status.textContent = "🛡️ Admin panel unlocked below! (Reminder: it's all made-up example data, just for fun.)";
+        status.textContent = "👑 Super Erik Plan unlocked! Open the dino game to try it.";
       } else {
         status.textContent = "That's not a real code.";
       }
@@ -446,6 +442,202 @@
     });
 
     updatePlanBadge();
+
+    // ---- Creator login (a real login — server-verified, not a fun code) ----
+
+    let isCreatorLoggedIn = false;
+
+    function updateCreatorUI() {
+      document.getElementById("creatorBadge").innerHTML = isCreatorLoggedIn
+        ? 'Erik<span class="creator-pill">CREATOR</span>'
+        : "";
+      document.getElementById("creatorLoginForm").hidden = isCreatorLoggedIn;
+      document.getElementById("creatorLogoutButton").hidden = !isCreatorLoggedIn;
+      document.getElementById("creatorInboxCard").hidden = !isCreatorLoggedIn;
+      if (isCreatorLoggedIn) loadInbox();
+    }
+
+    async function checkCreatorSession() {
+      try {
+        const res = await fetch("/api/auth");
+        const data = await res.json();
+        isCreatorLoggedIn = !!data.isCreator;
+      } catch {
+        isCreatorLoggedIn = false;
+      }
+      updateCreatorUI();
+    }
+
+    document.getElementById("creatorLoginForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("creatorPasswordInput");
+      const status = document.getElementById("creatorLoginStatus");
+      status.textContent = "Checking…";
+      try {
+        const res = await fetch("/api/auth", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password: input.value }),
+        });
+        const data = await res.json();
+        input.value = "";
+        if (data.ok) {
+          isCreatorLoggedIn = true;
+          status.textContent = "";
+          updateCreatorUI();
+        } else {
+          status.textContent = "Wrong password.";
+        }
+      } catch (err) {
+        status.textContent = "Could not log in: " + err.message;
+      }
+    });
+
+    document.getElementById("creatorLogoutButton").addEventListener("click", async () => {
+      try {
+        await fetch("/api/auth", { method: "DELETE" });
+      } catch {}
+      isCreatorLoggedIn = false;
+      document.getElementById("creatorLoginStatus").textContent = "";
+      updateCreatorUI();
+    });
+
+    checkCreatorSession();
+
+    // ---- Chat with Erik ----
+
+    function getVisitorId() {
+      try {
+        let id = localStorage.getItem("visitorId");
+        if (!id) {
+          id = crypto.randomUUID ? crypto.randomUUID() : "v-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+          localStorage.setItem("visitorId", id);
+        }
+        return id;
+      } catch {
+        return "anon-" + Math.random().toString(36).slice(2);
+      }
+    }
+
+    const visitorId = getVisitorId();
+
+    function renderChatThread(containerId, messages) {
+      const el = document.getElementById(containerId);
+      if (!messages.length) {
+        el.innerHTML = '<p class="muted">No messages yet.</p>';
+        return;
+      }
+      el.innerHTML = messages
+        .map(
+          (m) =>
+            `<div class="chat-message chat-message--${m.from}"><strong>${
+              m.from === "erik" ? "Erik" : "You"
+            }:</strong> ${m.text.replace(/</g, "&lt;")}</div>`
+        )
+        .join("");
+      el.scrollTop = el.scrollHeight;
+    }
+
+    async function loadMyChat() {
+      try {
+        const res = await fetch("/api/chat?visitorId=" + encodeURIComponent(visitorId));
+        const data = await res.json();
+        renderChatThread("chatMessages", data.messages || []);
+      } catch (err) {
+        document.getElementById("chatMessages").textContent = "Could not load messages: " + err.message;
+      }
+    }
+
+    document.getElementById("chatRefreshButton").addEventListener("click", loadMyChat);
+
+    document.getElementById("chatForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const input = document.getElementById("chatInput");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visitorId, text, from: "visitor" }),
+        });
+        const data = await res.json();
+        renderChatThread("chatMessages", data.messages || []);
+      } catch (err) {
+        alert("Could not send: " + err.message);
+      }
+    });
+
+    loadMyChat();
+
+    // ---- Creator inbox (only usable once actually logged in — the server
+    // re-checks the real session on every request, this UI is just a view) ----
+
+    let selectedConversationId = null;
+
+    async function loadInbox() {
+      try {
+        const res = await fetch("/api/chat?inbox=1");
+        const data = await res.json();
+        const list = document.getElementById("inboxList");
+        if (!data.conversations || !data.conversations.length) {
+          list.innerHTML = '<p class="muted">No conversations yet.</p>';
+          return;
+        }
+        list.innerHTML = data.conversations
+          .map((c) => {
+            const last = c.messages[c.messages.length - 1];
+            return `<div class="inbox-row" data-id="${c.visitorId}">
+              <strong>Visitor ${c.visitorId.slice(0, 8)}</strong>
+              <div class="muted">${last ? last.text.slice(0, 60).replace(/</g, "&lt;") : ""}</div>
+            </div>`;
+          })
+          .join("");
+      } catch (err) {
+        document.getElementById("inboxList").textContent = "Could not load inbox: " + err.message;
+      }
+    }
+
+    document.getElementById("inboxList").addEventListener("click", (e) => {
+      const row = e.target.closest(".inbox-row");
+      if (!row) return;
+      selectedConversationId = row.dataset.id;
+      loadSelectedConversation();
+    });
+
+    async function loadSelectedConversation() {
+      if (!selectedConversationId) return;
+      try {
+        const res = await fetch("/api/chat?visitorId=" + encodeURIComponent(selectedConversationId));
+        const data = await res.json();
+        renderChatThread("inboxMessages", data.messages || []);
+        document.getElementById("inboxReplyForm").hidden = false;
+      } catch (err) {
+        document.getElementById("inboxMessages").textContent = "Could not load: " + err.message;
+      }
+    }
+
+    document.getElementById("inboxReplyForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!selectedConversationId) return;
+      const input = document.getElementById("inboxReplyInput");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      try {
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visitorId: selectedConversationId, text, from: "erik" }),
+        });
+        const data = await res.json();
+        renderChatThread("inboxMessages", data.messages || []);
+        loadInbox();
+      } catch (err) {
+        alert("Could not send: " + err.message);
+      }
+    });
 
     async function load() {
       const content = document.getElementById("content");
@@ -826,6 +1018,8 @@
       const overlay = document.getElementById("dinoOverlay");
       const startButton = document.getElementById("dinoStartButton");
       const closeButton = document.getElementById("dinoCloseButton");
+      const commandForm = document.getElementById("dinoCommandForm");
+      const commandInput = document.getElementById("dinoCommandInput");
       const BASE_PLAYER_SIZE = 32;
       const playerX = 50;
 
@@ -841,8 +1035,16 @@
       let active = false;
       let proMode = false;
       let secretMode = false;
+      let superMode = false;
       let player, obstacles, clouds, speed, score, running, lastTime, spawnTimer, finale;
-      let shieldUsed, shieldFlashT;
+      let shieldCount, shieldFlashT, freeFly, freeFlyPos;
+      const flyKeys = { up: false, down: false, left: false, right: false };
+
+      function startingShields() {
+        if (superMode) return 100;
+        if (proMode) return 1;
+        return 0;
+      }
 
       function lerp(a, b, t) {
         return a + (b - a) * t;
@@ -870,12 +1072,14 @@
         spawnTimer = 0;
         running = true;
         finale = null;
-        shieldUsed = false;
+        shieldCount = startingShields();
         shieldFlashT = 0;
+        freeFly = false;
+        freeFlyPos = null;
       }
 
       function saveBestScoreIfPro() {
-        if (!proMode) return;
+        if (!proMode && !superMode) return;
         try {
           const best = Number(localStorage.getItem("dinoBestScore") || 0);
           if (score > best) localStorage.setItem("dinoBestScore", String(Math.floor(score)));
@@ -892,7 +1096,7 @@
           reset();
           return;
         }
-        if (!player.jumping) {
+        if (!freeFly && !player.jumping) {
           player.vy = -14 * scale;
           player.jumping = true;
         }
@@ -992,12 +1196,22 @@
 
         if (shieldFlashT > 0) shieldFlashT = Math.max(0, shieldFlashT - dt);
 
-        player.vy += 0.6 * scale * step;
-        player.y += player.vy * step;
-        if (player.y >= groundY) {
-          player.y = groundY;
-          player.vy = 0;
-          player.jumping = false;
+        if (freeFly) {
+          const flySpeed = 6 * scale * step;
+          if (flyKeys.up) freeFlyPos.y -= flySpeed;
+          if (flyKeys.down) freeFlyPos.y += flySpeed;
+          if (flyKeys.left) freeFlyPos.x -= flySpeed;
+          if (flyKeys.right) freeFlyPos.x += flySpeed;
+          freeFlyPos.x = Math.max(playerSize, Math.min(canvas.width - playerSize, freeFlyPos.x));
+          freeFlyPos.y = Math.max(playerSize, Math.min(groundY + playerSize, freeFlyPos.y));
+        } else {
+          player.vy += 0.6 * scale * step;
+          player.y += player.vy * step;
+          if (player.y >= groundY) {
+            player.y = groundY;
+            player.vy = 0;
+            player.jumping = false;
+          }
         }
 
         spawnTimer -= dt;
@@ -1013,20 +1227,22 @@
           if (c.x < -40) c.x = canvas.width + 40;
         }
 
-        for (const o of obstacles) {
-          const overlapX = playerX + playerSize > o.x && playerX < o.x + o.width;
-          const overlapY = player.y < o.top + o.height && player.y + playerSize > o.top;
-          if (overlapX && overlapY) {
-            if (proMode && !shieldUsed) {
-              shieldUsed = true;
-              shieldFlashT = 600;
-              obstacles = obstacles.filter((other) => other !== o);
-            } else if (proMode) {
-              startFinale();
-            } else {
-              running = false;
+        if (!freeFly) {
+          for (const o of obstacles) {
+            const overlapX = playerX + playerSize > o.x && playerX < o.x + o.width;
+            const overlapY = player.y < o.top + o.height && player.y + playerSize > o.top;
+            if (overlapX && overlapY) {
+              if (shieldCount > 0) {
+                shieldCount--;
+                shieldFlashT = 600;
+                obstacles = obstacles.filter((other) => other !== o);
+              } else if (proMode || superMode) {
+                startFinale();
+              } else {
+                running = false;
+              }
+              break;
             }
-            break;
           }
         }
 
@@ -1067,6 +1283,12 @@
 
         if (finale) {
           drawFinale();
+        } else if (freeFly) {
+          drawFlyingDino(freeFlyPos.x, freeFlyPos.y, -15);
+          for (const o of obstacles) {
+            ctx.font = Math.round(o.height) + "px serif";
+            ctx.fillText(o.emoji, o.x, o.top + o.height);
+          }
         } else {
           const runBob = running && !player.jumping ? Math.sin(performance.now() / 140) * 2 * scale : 0;
           const dinoCenterX = playerX - 8 + playerSize * 0.5;
@@ -1102,6 +1324,14 @@
         ctx.font = "bold 20px sans-serif";
         ctx.textAlign = "left";
         ctx.fillText("Score: " + Math.floor(score), 20, 40);
+        if (shieldCount > 0) {
+          ctx.font = "16px sans-serif";
+          ctx.fillText("🛡️ Shields: " + shieldCount, 20, 64);
+        }
+        if (freeFly) {
+          ctx.font = "16px sans-serif";
+          ctx.fillText('Flying — type "Done" below to land', 20, shieldCount > 0 ? 88 : 64);
+        }
 
         if (!running && !finale) {
           ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
@@ -1206,6 +1436,8 @@
       function openGame() {
         proMode = isProMode();
         secretMode = isSecretMode();
+        superMode = isSuperMode();
+        commandForm.hidden = !superMode;
         overlay.hidden = false;
         active = true;
         resizeCanvas();
@@ -1226,14 +1458,44 @@
       window.addEventListener("resize", () => {
         if (!overlay.hidden) resizeCanvas();
       });
+
+      commandForm.addEventListener("submit", (e) => {
+        e.preventDefault();
+        const word = commandInput.value.trim().toLowerCase();
+        commandInput.value = "";
+        commandInput.blur();
+        if (!superMode) return;
+        if (word === "alexey") {
+          freeFly = true;
+          if (!freeFlyPos) freeFlyPos = { x: playerX, y: player.y };
+        } else if (word === "done") {
+          freeFly = false;
+          player.y = groundY;
+          player.vy = 0;
+          player.jumping = false;
+        }
+      });
+
       document.addEventListener("keydown", (e) => {
         if (overlay.hidden) return;
+        if (document.activeElement === commandInput) return;
         if (e.code === "Space") {
           e.preventDefault();
           jump();
         } else if (e.code === "Escape") {
           closeGame();
+        } else if (freeFly) {
+          if (e.code === "ArrowUp" || e.code === "KeyW") flyKeys.up = true;
+          if (e.code === "ArrowDown" || e.code === "KeyS") flyKeys.down = true;
+          if (e.code === "ArrowLeft" || e.code === "KeyA") flyKeys.left = true;
+          if (e.code === "ArrowRight" || e.code === "KeyD") flyKeys.right = true;
         }
+      });
+      document.addEventListener("keyup", (e) => {
+        if (e.code === "ArrowUp" || e.code === "KeyW") flyKeys.up = false;
+        if (e.code === "ArrowDown" || e.code === "KeyS") flyKeys.down = false;
+        if (e.code === "ArrowLeft" || e.code === "KeyA") flyKeys.left = false;
+        if (e.code === "ArrowRight" || e.code === "KeyD") flyKeys.right = false;
       });
     })();
   </script>
