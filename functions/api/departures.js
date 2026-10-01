@@ -24,24 +24,6 @@ async function graphql(query) {
   return json.data;
 }
 
-async function getLiveDepartures(stopId, routes) {
-  const legacyStopId = stopId.split(":")[1];
-  const url = new URL("https://transport.tallinn.ee/siri-stop-departures.php");
-  url.searchParams.set("stopid", legacyStopId);
-  const response = await fetch(url, { headers: { "user-agent": "Mozilla/5.0" } });
-  const text = await response.text();
-  const lines = text.split("\n").slice(2);
-  const timesByRoute = Object.fromEntries(routes.map((r) => [r, []]));
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    const fields = line.split(",");
-    const routeNum = fields[1];
-    const minutes = Math.floor(Number(fields[5]) / 60);
-    if (routeNum in timesByRoute) timesByRoute[routeNum].push(minutes);
-  }
-  return timesByRoute;
-}
-
 // Full scheduled timetable for one stop/date, as a flat list of {routeName, time} (absolute JS Date).
 async function getScheduledDepartures(stopId, routeNames, dateYyyymmdd) {
   const data = await graphql(`{
@@ -157,18 +139,11 @@ async function planSchoolTrip(now, arrivalTarget) {
 export async function onRequestGet({ request }) {
   const now = new Date();
   const arrivalTarget = new URL(request.url).searchParams.get("arriveBy") || SCHOOL_ARRIVAL_TARGET;
-
-  const [hamarLive, lillepiLive, plan] = await Promise.all([
-    getLiveDepartures(STOP_HAMAR_TEE, ["8", "48"]),
-    getLiveDepartures(STOP_LILLEPI, CONNECTING_ROUTES),
-    planSchoolTrip(now, arrivalTarget),
-  ]);
+  const plan = await planSchoolTrip(now, arrivalTarget);
 
   return Response.json({
     now: fmt(now),
     isWeekend: isTallinnWeekend(now),
-    hamarTee: hamarLive,
-    lillepi: lillepiLive,
     plan,
   });
 }
