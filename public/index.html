@@ -67,6 +67,9 @@
   .muted { opacity: 0.6; font-size: 0.85rem; }
   .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
   .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     background: #0000000d;
     color: #24292e;
     font-weight: 500;
@@ -74,6 +77,18 @@
     border-radius: 999px;
     font-size: 0.85rem;
   }
+  .chip-fill { cursor: pointer; }
+  .chip-remove {
+    background: none;
+    border: none;
+    color: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    opacity: 0.6;
+  }
+  .chip-remove:hover { opacity: 1; }
   .secondary-button {
     background: #0000000d;
     color: #24292e;
@@ -505,18 +520,29 @@
         ? favorites
             .map(
               (f) =>
-                `<button type="button" class="chip" data-id="${f.id}" data-name="${f.name.replace(/"/g, "&quot;")}" data-routes="${(f.routes || []).join(",")}">${f.name}</button>`
+                `<span class="chip">
+                  <span class="chip-fill" data-id="${f.id}" data-name="${f.name.replace(/"/g, "&quot;")}" data-routes="${(f.routes || []).join(",")}">${f.name}</span>
+                  <button type="button" class="chip-remove" data-id="${f.id}" aria-label="Remove favorite">×</button>
+                </span>`
             )
             .join("")
         : '<p class="muted">No favorite stops saved yet.</p>';
     }
 
     document.getElementById("favoritesBox").addEventListener("click", (e) => {
-      const chip = e.target.closest(".chip");
-      if (!chip) return;
-      document.getElementById("fromInput").value = chip.dataset.name;
-      fromId = chip.dataset.id;
-      fromRoutes = chip.dataset.routes ? chip.dataset.routes.split(",") : [];
+      const removeButton = e.target.closest(".chip-remove");
+      if (removeButton) {
+        const favorites = loadFavorites().filter((f) => f.id !== removeButton.dataset.id);
+        saveFavoritesList(favorites);
+        renderFavorites();
+        renderStopTabs();
+        return;
+      }
+      const fill = e.target.closest(".chip-fill");
+      if (!fill) return;
+      document.getElementById("fromInput").value = fill.dataset.name;
+      fromId = fill.dataset.id;
+      fromRoutes = fill.dataset.routes ? fill.dataset.routes.split(",") : [];
     });
 
     document.getElementById("saveFavoriteButton").addEventListener("click", () => {
@@ -690,7 +716,8 @@
 
         ctx.textBaseline = "alphabetic";
         ctx.font = (playerSize + 14) + "px serif";
-        ctx.fillText("🦖", playerX - 8, player.y + playerSize + 8);
+        const runBob = running && !player.jumping ? Math.sin(performance.now() / 90) * 3 : 0;
+        ctx.fillText("🦖", playerX - 8, player.y + playerSize + 8 + runBob);
 
         for (const o of obstacles) {
           ctx.font = Math.round(o.height) + "px serif";
