@@ -95,7 +95,7 @@ function isTallinnWeekend(date) {
   return weekday === "Sat" || weekday === "Sun";
 }
 
-async function planSchoolTrip(now, arrivalTarget) {
+async function planSchoolTrip(now, arrivalTarget, limit) {
   const [h, m] = arrivalTarget.split(":").map(Number);
   const target = nextTallinnOccurrence(now, h, m);
   const dateYyyymmdd = tallinnDateString(target, "");
@@ -129,17 +129,21 @@ async function planSchoolTrip(now, arrivalTarget) {
   const onTimeOptions = candidates.filter((c) => c.onTime);
   if (onTimeOptions.length) {
     // Latest (most efficient) on-time options first.
-    return onTimeOptions.slice(-2).reverse();
+    return onTimeOptions.slice(-limit).reverse();
   }
 
   // Nothing arrives in time — show the earliest options so it's clear how late they'd be.
-  return candidates.slice(0, 2);
+  return candidates.slice(0, limit);
 }
 
 export async function onRequestGet({ request }) {
   const now = new Date();
-  const arrivalTarget = new URL(request.url).searchParams.get("arriveBy") || SCHOOL_ARRIVAL_TARGET;
-  const plan = await planSchoolTrip(now, arrivalTarget);
+  const params = new URL(request.url).searchParams;
+  const arrivalTarget = params.get("arriveBy") || SCHOOL_ARRIVAL_TARGET;
+  // Pro plan shows more options (handled client-side); clamp so the query
+  // string can't be abused to request an absurd number of itineraries.
+  const limit = Math.min(6, Math.max(1, Number(params.get("limit")) || 2));
+  const plan = await planSchoolTrip(now, arrivalTarget, limit);
 
   return Response.json({
     now: fmt(now),
@@ -147,3 +151,1045 @@ export async function onRequestGet({ request }) {
     plan,
   });
 }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus Tracker</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, system-ui, sans-serif;
+    margin: 0;
+    padding: 16px;
+    min-height: 100vh;
+    color: #24292e;
+    background: linear-gradient(135deg, #ff5f6d, #ffc371, #f9f871, #56ccf2, #a86ef7, #ff6ec7);
+    background-attachment: fixed;
+  }
+  .page {
+    max-width: 480px;
+    margin: 0 auto;
+    display: grid;
+    gap: 20px;
+  }
+  .card {
+    background: rgba(255, 255, 255, 0.94);
+    border-radius: 18px;
+    padding: 20px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+  }
+  h1 { font-size: 1.5rem; margin-top: 0; }
+  h2 { font-size: 1.1rem; margin-top: 0; }
+  .stop { margin-bottom: 1rem; }
+  .route { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #0001; }
+  .plan-option { border: 1px solid #0002; border-radius: 8px; padding: 10px; margin-bottom: 8px; }
+  .on-time { color: #1a7f37; font-weight: 600; }
+  .late { color: #cf222e; font-weight: 600; }
+  .updated { font-size: 0.8rem; opacity: 0.6; }
+  button {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-weight: 600;
+    color: #fff;
+    background: linear-gradient(135deg, #ff5f6d, #a86ef7);
+  }
+  button:hover { filter: brightness(1.05); }
+  .field { margin-bottom: 10px; position: relative; }
+  .field label { display: block; font-size: 0.85rem; opacity: 0.7; margin-bottom: 4px; }
+  .field input {
+    width: 100%;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid #0002;
+    background: #fff;
+    color: inherit;
+  }
+  .suggestions { position: absolute; left: 0; right: 0; z-index: 10; background: #fff; border: 1px solid #0002; border-radius: 8px; max-height: 200px; overflow-y: auto; box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+  .suggestion-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #0001; }
+  .suggestion-item:hover { background: #0001; }
+  .suggestion-item small { display: block; opacity: 0.6; }
+  .leg { padding: 4px 0 4px 10px; border-left: 2px solid #0002; margin: 4px 0; font-size: 0.9rem; }
+  .leg .walk { opacity: 0.7; font-style: italic; }
+  .route-block { border: 1px solid #0002; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .stop-list { font-size: 0.85rem; line-height: 1.6; opacity: 0.9; }
+  .muted { opacity: 0.6; font-size: 0.85rem; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #0000000d;
+    color: #24292e;
+    font-weight: 500;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+  }
+  .chip-fill { cursor: pointer; }
+  .chip-remove {
+    background: none;
+    border: none;
+    color: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    opacity: 0.6;
+  }
+  .chip-remove:hover { opacity: 1; }
+  .secondary-button {
+    background: #0000000d;
+    color: #24292e;
+    font-weight: 500;
+  }
+  .chip-active { background: linear-gradient(135deg, #ff5f6d, #a86ef7); color: #fff; }
+  .dino-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: #000;
+  }
+  .dino-overlay[hidden] { display: none; }
+  #dinoCanvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  .dino-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    background: #ffffffdd;
+    color: #24292e;
+  }
+
+  /* Tablet and up: two columns */
+  @media (min-width: 700px) {
+    .page {
+      max-width: 900px;
+      grid-template-columns: 1fr 1fr;
+    }
+    .card--wide { grid-column: 1 / -1; }
+  }
+
+  /* Desktop: three columns, full spread */
+  @media (min-width: 1100px) {
+    .page {
+      max-width: 1400px;
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+    .card--wide { grid-column: auto; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="card card--wide">
+      <h1>Bus Tracker <span id="planBadge" style="font-size: 0.85rem; font-weight: 600; opacity: 0.8;"></span></h1>
+      <button id="refresh">Refresh</button>
+      <p class="updated" id="updated"></p>
+
+      <div class="chip-row" id="stopTabs"></div>
+      <div id="stopBoard"></div>
+
+      <div class="field">
+        <label>School arrival time</label>
+        <input id="schoolArrivalInput" type="time">
+      </div>
+      <div id="content">Loading…</div>
+    </div>
+
+    <div class="card">
+      <h2>Plan a different trip</h2>
+      <div class="field">
+        <label>Favorite stops (tap to fill in "From")</label>
+        <div class="chip-row" id="favoritesBox"></div>
+        <button id="saveFavoriteButton" type="button" class="secondary-button">★ Save current "From" as favorite</button>
+      </div>
+      <div class="field">
+        <label>From</label>
+        <input id="fromInput" type="text" placeholder="Search a stop, e.g. Lillepi" autocomplete="off">
+        <div class="suggestions" id="fromSuggestions"></div>
+        <button id="useLocationButton" type="button" style="margin-top: 6px;">Use my location</button>
+        <p class="muted" id="locationStatus" style="margin-top: 4px;"></p>
+      </div>
+      <div class="field">
+        <label>To</label>
+        <input id="toInput" type="text" placeholder="Search a stop" autocomplete="off">
+        <div class="suggestions" id="toSuggestions"></div>
+      </div>
+      <div class="field">
+        <label>Arrive by (optional, leave blank for next buses now)</label>
+        <input id="arriveByInput" type="time">
+      </div>
+      <button id="planButton">Find buses</button>
+      <div id="planResults"></div>
+    </div>
+
+    <div class="card">
+      <h2>Look up a bus route</h2>
+      <div class="field">
+        <input id="routeInput" type="text" placeholder="e.g. 8, 34, T1" autocomplete="off">
+      </div>
+      <button id="routeButton">Look up</button>
+      <div id="routeResults"></div>
+    </div>
+
+    <div class="card" id="dinoCard">
+      <h2>🦕 No-internet game</h2>
+      <p class="muted">Play full-screen. Space or tap to jump, Escape or ✕ to close.</p>
+      <p class="muted" id="dinoProHint"></p>
+      <button id="dinoStartButton" type="button">Play</button>
+    </div>
+
+    <div class="card">
+      <h2>✨ Secret code</h2>
+      <p class="muted">Know a code? Type it in. (This just unlocks fun stuff in your browser — it's not a real account or payment, anyone who asks for the code can use it.)</p>
+      <div class="field">
+        <input id="secretCodeInput" type="text" placeholder="Enter code" autocomplete="off">
+      </div>
+      <button id="secretCodeButton" type="button">Unlock</button>
+      <p class="muted" id="secretCodeStatus"></p>
+    </div>
+  </div>
+
+  <div id="dinoOverlay" class="dino-overlay" hidden>
+    <canvas id="dinoCanvas"></canvas>
+    <button id="dinoCloseButton" class="dino-close" type="button">✕ Close</button>
+  </div>
+
+  <script>
+    // ---- Pro plan / secret codes (client-side only — a fun unlock, not a real account) ----
+
+    const PRO_CODE = "sonic77";
+    const SECRET_CODE = "ErikBlaster007";
+
+    function isProMode() {
+      try {
+        return localStorage.getItem("proMode") === "true";
+      } catch {
+        return false;
+      }
+    }
+
+    function isSecretMode() {
+      try {
+        return localStorage.getItem("secretMode") === "true";
+      } catch {
+        return false;
+      }
+    }
+
+    function updatePlanBadge() {
+      document.getElementById("planBadge").textContent = isProMode() ? "⭐ Pro" : "";
+      const hint = document.getElementById("dinoProHint");
+      if (isProMode()) {
+        hint.textContent = "⭐ Pro: crash and you'll get a special jetpack landing instead of a plain game over.";
+      } else if (isSecretMode()) {
+        hint.textContent = "🔓 Secret mode active — something's different about the dino this time.";
+      } else {
+        hint.textContent = "";
+      }
+    }
+
+    document.getElementById("secretCodeButton").addEventListener("click", () => {
+      const input = document.getElementById("secretCodeInput");
+      const status = document.getElementById("secretCodeStatus");
+      const code = input.value.trim();
+      if (!code) {
+        status.textContent = "Type a code first.";
+      } else if (code === PRO_CODE) {
+        try {
+          localStorage.setItem("proMode", "true");
+        } catch {}
+        status.textContent = "🎉 Pro Plan unlocked on this browser! More trip options below, and a surprise in the dino game.";
+      } else if (code === SECRET_CODE) {
+        try {
+          localStorage.setItem("secretMode", "true");
+        } catch {}
+        status.textContent = "🔓 Secret mode unlocked! Go play the dino game.";
+      } else {
+        status.textContent = "That's not a real code.";
+      }
+      input.value = "";
+      updatePlanBadge();
+    });
+
+    updatePlanBadge();
+
+    async function load() {
+      const content = document.getElementById("content");
+      content.textContent = "Loading…";
+      try {
+        const arrivalTime = document.getElementById("schoolArrivalInput").value;
+        const limit = isProMode() ? 4 : 2;
+        const url =
+          "/api/departures?limit=" + limit + (arrivalTime ? "&arriveBy=" + encodeURIComponent(arrivalTime) : "");
+        const res = await fetch(url);
+        const data = await res.json();
+        render(data);
+      } catch (err) {
+        const offlineHint = !navigator.onLine
+          ? " Looks like you're offline — scroll down and play the dinosaur game while you wait! 🦕"
+          : "";
+        content.textContent = "Could not load departures: " + err.message + offlineHint;
+      }
+    }
+
+    function render(data) {
+      document.getElementById("updated").textContent = "Updated " + data.now;
+
+      if (data.isWeekend) {
+        document.getElementById("content").innerHTML = "<p>It's the weekend — no school run today.</p>";
+        return;
+      }
+
+      let html = "<h2>School trip plan</h2>";
+      for (const opt of data.plan) {
+        if (opt.status) {
+          html += `<div class="plan-option">${opt.status}</div>`;
+          continue;
+        }
+        const statusClass = opt.onTime ? "on-time" : "late";
+        const statusText = opt.onTime ? "on time" : "LATE";
+        html += `<div class="plan-option">
+          Bus 8 departs <strong>${opt.departHamar}</strong> &rarr;
+          bus ${opt.connectRoute} at Lillepi (${opt.departLillepi}) &rarr;
+          school ~${opt.arriveSchool}
+          <span class="${statusClass}">[${statusText}]</span>
+        </div>`;
+      }
+
+      document.getElementById("content").innerHTML = html;
+    }
+
+    function renderStop(name, timesByRoute) {
+      let html = `<div class="stop"><h2>${name}</h2>`;
+      for (const [route, times] of Object.entries(timesByRoute)) {
+        const text = times.length ? times.map((m) => m + " min").join(", ") : "no upcoming buses";
+        html += `<div class="route"><span>Bus ${route}</span><span>${text}</span></div>`;
+      }
+      html += "</div>";
+      return html;
+    }
+
+    // ---- Favorite stop tabs on the main board ----
+
+    let activeStopId = null;
+
+    function renderStopTabs() {
+      const favorites = loadFavorites();
+      const tabs = document.getElementById("stopTabs");
+      const board = document.getElementById("stopBoard");
+
+      if (!favorites.length) {
+        tabs.innerHTML = "";
+        board.innerHTML = '<p class="muted">Save a favorite stop in "Plan a different trip" below to see its live departures here.</p>';
+        return;
+      }
+
+      if (!activeStopId || !favorites.some((f) => f.id === activeStopId)) {
+        activeStopId = favorites[0].id;
+      }
+
+      tabs.innerHTML = favorites
+        .map(
+          (f) =>
+            `<button type="button" class="chip${f.id === activeStopId ? " chip-active" : ""}" data-id="${f.id}">${f.name}</button>`
+        )
+        .join("");
+
+      loadStopBoard();
+    }
+
+    async function loadStopBoard() {
+      const board = document.getElementById("stopBoard");
+      const favorite = loadFavorites().find((f) => f.id === activeStopId);
+      if (!favorite || !favorite.routes || !favorite.routes.length) {
+        board.innerHTML = '<p class="muted">No routes known for this stop.</p>';
+        return;
+      }
+      board.textContent = "Loading…";
+      try {
+        const res = await fetch(
+          `/api/stop-departures?id=${encodeURIComponent(favorite.id)}&routes=${encodeURIComponent(favorite.routes.join(","))}`
+        );
+        const data = await res.json();
+        board.innerHTML = renderStop(favorite.name, data.departures);
+      } catch (err) {
+        board.textContent = "Could not load departures: " + err.message;
+      }
+    }
+
+    document.getElementById("stopTabs").addEventListener("click", (e) => {
+      const chip = e.target.closest(".chip");
+      if (!chip) return;
+      activeStopId = chip.dataset.id;
+      renderStopTabs();
+    });
+
+    const schoolArrivalInput = document.getElementById("schoolArrivalInput");
+    try {
+      schoolArrivalInput.value = localStorage.getItem("schoolArrivalTime") || "08:00";
+    } catch {
+      schoolArrivalInput.value = "08:00";
+    }
+    schoolArrivalInput.addEventListener("change", () => {
+      try {
+        localStorage.setItem("schoolArrivalTime", schoolArrivalInput.value);
+      } catch {}
+      load();
+    });
+
+    document.getElementById("refresh").addEventListener("click", load);
+    load();
+
+    // ---- Stop search + trip planning ----
+
+    function setupStopSearch(inputId, suggestionsId, onSelect) {
+      const input = document.getElementById(inputId);
+      const box = document.getElementById(suggestionsId);
+      let selectedId = null;
+      let selectedRoutes = [];
+      let debounceTimer = null;
+
+      input.addEventListener("input", () => {
+        selectedId = null;
+        selectedRoutes = [];
+        onSelect(null, []);
+        clearTimeout(debounceTimer);
+        const q = input.value.trim();
+        if (q.length < 2) {
+          box.innerHTML = "";
+          return;
+        }
+        debounceTimer = setTimeout(async () => {
+          try {
+            const res = await fetch("/api/stops?q=" + encodeURIComponent(q));
+            const data = await res.json();
+            box.innerHTML = data.stops
+              .map(
+                (s) =>
+                  `<div class="suggestion-item" data-id="${s.id}" data-name="${s.name.replace(/"/g, "&quot;")}" data-routes="${s.routes.join(",")}">
+                    ${s.name}
+                    <small>${s.routes.slice(0, 8).join(", ")}</small>
+                  </div>`
+              )
+              .join("");
+          } catch (err) {
+            box.innerHTML = `<div class="suggestion-item">Search failed: ${err.message}</div>`;
+          }
+        }, 300);
+      });
+
+      box.addEventListener("click", (e) => {
+        const item = e.target.closest(".suggestion-item");
+        if (!item || !item.dataset.id) return;
+        input.value = item.dataset.name;
+        selectedId = item.dataset.id;
+        selectedRoutes = item.dataset.routes ? item.dataset.routes.split(",") : [];
+        box.innerHTML = "";
+        onSelect(selectedId, selectedRoutes);
+      });
+
+      document.addEventListener("click", (e) => {
+        if (!input.contains(e.target) && !box.contains(e.target)) box.innerHTML = "";
+      });
+
+      return () => selectedId;
+    }
+
+    let fromId = null;
+    let toId = null;
+    let fromRoutes = [];
+    const getFromId = setupStopSearch("fromInput", "fromSuggestions", (id, routes) => {
+      fromId = id;
+      fromRoutes = routes || [];
+    });
+    const getToId = setupStopSearch("toInput", "toSuggestions", (id) => (toId = id));
+
+    document.getElementById("useLocationButton").addEventListener("click", () => {
+      const status = document.getElementById("locationStatus");
+      const box = document.getElementById("fromSuggestions");
+
+      if (!navigator.geolocation) {
+        status.textContent = "Location isn't supported on this device.";
+        return;
+      }
+
+      status.textContent = "Finding your location…";
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          status.textContent = "Looking for nearby stops…";
+          try {
+            const res = await fetch(`/api/nearby-stops?lat=${latitude}&lon=${longitude}`);
+            const data = await res.json();
+            if (!data.stops || !data.stops.length) {
+              status.textContent = "No stops found nearby.";
+              return;
+            }
+            status.textContent = "Pick the closest stop:";
+            box.innerHTML = data.stops
+              .map(
+                (s) =>
+                  `<div class="suggestion-item" data-id="${s.id}" data-name="${s.name.replace(/"/g, "&quot;")}" data-routes="${s.routes.join(",")}">
+                    ${s.name} — ${s.distance} m
+                    <small>${s.routes.slice(0, 8).join(", ")}</small>
+                  </div>`
+              )
+              .join("");
+          } catch (err) {
+            status.textContent = "Could not look up nearby stops: " + err.message;
+          }
+        },
+        (err) => {
+          status.textContent = "Location access denied or unavailable: " + err.message;
+        }
+      );
+    });
+
+    document.getElementById("planButton").addEventListener("click", async () => {
+      const results = document.getElementById("planResults");
+      if (!getFromId() || !getToId()) {
+        results.innerHTML = '<p class="muted">Pick a "From" and "To" stop from the suggestion list first.</p>';
+        return;
+      }
+      results.textContent = "Looking for buses…";
+      try {
+        const arriveBy = document.getElementById("arriveByInput").value;
+        const url = `/api/plan?from=${encodeURIComponent(getFromId())}&to=${encodeURIComponent(getToId())}` +
+          (arriveBy ? `&arriveBy=${encodeURIComponent(arriveBy)}` : "");
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data.itineraries || !data.itineraries.length) {
+          results.innerHTML = '<p class="muted">No trips found.</p>';
+          return;
+        }
+        results.innerHTML = data.itineraries
+          .map((it) => {
+            const legsHtml = it.legs
+              .map((leg) =>
+                leg.mode === "WALK"
+                  ? `<div class="leg walk">walk ${leg.walkMinutes} min to ${leg.to}</div>`
+                  : `<div class="leg">bus <strong>${leg.route}</strong> ${leg.from} (${leg.start}) &rarr; ${leg.to} (${leg.end})</div>`
+              )
+              .join("");
+            return `<div class="plan-option">
+              <strong>${it.start} &rarr; ${it.end}</strong> (${it.durationMin} min)
+              ${legsHtml}
+            </div>`;
+          })
+          .join("");
+      } catch (err) {
+        results.textContent = "Could not plan trip: " + err.message;
+      }
+    });
+
+    // ---- Route lookup ----
+
+    document.getElementById("routeButton").addEventListener("click", async () => {
+      const results = document.getElementById("routeResults");
+      const q = document.getElementById("routeInput").value.trim();
+      if (!q) return;
+      results.textContent = "Looking up route…";
+      try {
+        const res = await fetch("/api/route-stops?q=" + encodeURIComponent(q));
+        const data = await res.json();
+        if (!data.routes || !data.routes.length) {
+          results.innerHTML = '<p class="muted">No Tallinn route found with that number.</p>';
+          return;
+        }
+        results.innerHTML = data.routes
+          .map(
+            (r) => `<div class="route-block">
+              <strong>${r.mode === "TRAM" ? "Tram" : "Bus"} ${r.shortName}</strong> — ${r.longName}
+              ${r.directions
+                .map(
+                  (d) => `<div style="margin-top:8px;">
+                    <em>towards ${d.headsign}</em>
+                    <div class="stop-list">${d.stops.map((s) => s.name).join(" &rarr; ")}</div>
+                  </div>`
+                )
+                .join("")}
+            </div>`
+          )
+          .join("");
+      } catch (err) {
+        results.textContent = "Could not look up route: " + err.message;
+      }
+    });
+
+    // ---- Favorite stops ----
+
+    function loadFavorites() {
+      try {
+        return JSON.parse(localStorage.getItem("favoriteStops") || "[]");
+      } catch {
+        return [];
+      }
+    }
+
+    function saveFavoritesList(favorites) {
+      try {
+        localStorage.setItem("favoriteStops", JSON.stringify(favorites));
+      } catch {}
+    }
+
+    function renderFavorites() {
+      const favorites = loadFavorites();
+      const box = document.getElementById("favoritesBox");
+      box.innerHTML = favorites.length
+        ? favorites
+            .map(
+              (f) =>
+                `<span class="chip">
+                  <span class="chip-fill" data-id="${f.id}" data-name="${f.name.replace(/"/g, "&quot;")}" data-routes="${(f.routes || []).join(",")}">${f.name}</span>
+                  <button type="button" class="chip-remove" data-id="${f.id}" aria-label="Remove favorite">×</button>
+                </span>`
+            )
+            .join("")
+        : '<p class="muted">No favorite stops saved yet.</p>';
+    }
+
+    document.getElementById("favoritesBox").addEventListener("click", (e) => {
+      const removeButton = e.target.closest(".chip-remove");
+      if (removeButton) {
+        const favorites = loadFavorites().filter((f) => f.id !== removeButton.dataset.id);
+        saveFavoritesList(favorites);
+        renderFavorites();
+        renderStopTabs();
+        return;
+      }
+      const fill = e.target.closest(".chip-fill");
+      if (!fill) return;
+      document.getElementById("fromInput").value = fill.dataset.name;
+      fromId = fill.dataset.id;
+      fromRoutes = fill.dataset.routes ? fill.dataset.routes.split(",") : [];
+    });
+
+    document.getElementById("saveFavoriteButton").addEventListener("click", () => {
+      const id = getFromId();
+      if (!id) {
+        alert('Pick a "From" stop from the suggestion list first.');
+        return;
+      }
+      const name = document.getElementById("fromInput").value;
+      const favorites = loadFavorites();
+      if (!favorites.some((f) => f.id === id)) {
+        favorites.push({ id, name, routes: fromRoutes });
+        if (favorites.length > 6) favorites.shift();
+        saveFavoritesList(favorites);
+        renderFavorites();
+        renderStopTabs();
+      }
+    });
+
+    renderFavorites();
+    renderStopTabs();
+
+    // ---- No-internet dinosaur game ----
+
+    (function setupDinoGame() {
+      const canvas = document.getElementById("dinoCanvas");
+      const ctx = canvas.getContext("2d");
+      const overlay = document.getElementById("dinoOverlay");
+      const startButton = document.getElementById("dinoStartButton");
+      const closeButton = document.getElementById("dinoCloseButton");
+      const BASE_PLAYER_SIZE = 32;
+      const playerX = 50;
+
+      const FINALE_ASCEND = 900;
+      const FINALE_CRUISE = 1500;
+      const FINALE_DESCEND = 1000;
+      const FINALE_PODIUM = 2200;
+      const FINALE_TOTAL = FINALE_ASCEND + FINALE_CRUISE + FINALE_DESCEND + FINALE_PODIUM;
+
+      let scale = 1;
+      let playerSize = BASE_PLAYER_SIZE;
+      let groundY = 300;
+      let active = false;
+      let proMode = false;
+      let secretMode = false;
+      let player, obstacles, clouds, speed, score, running, lastTime, spawnTimer, finale;
+
+      function lerp(a, b, t) {
+        return a + (b - a) * t;
+      }
+
+      function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        // Scale everything to the screen size so the playable area looks right
+        // on both a small phone and a huge desktop monitor, instead of a tiny
+        // strip of ground under a mostly-empty sky.
+        scale = Math.min(2, Math.max(0.9, Math.min(canvas.width, canvas.height) / 500));
+        playerSize = BASE_PLAYER_SIZE * scale;
+        groundY = canvas.height - 130 * scale;
+        if (player && !player.jumping) player.y = groundY;
+      }
+
+      function reset() {
+        player = { y: groundY, vy: 0, jumping: false };
+        obstacles = [];
+        clouds = [
+          { x: canvas.width * 0.15, y: 60 },
+          { x: canvas.width * 0.5, y: 100 },
+          { x: canvas.width * 0.85, y: 50 },
+        ];
+        speed = 6 * scale;
+        score = 0;
+        spawnTimer = 0;
+        running = true;
+        finale = null;
+      }
+
+      function jump() {
+        if (finale) {
+          // Let an impatient player skip straight to the restart prompt
+          // instead of sitting through the whole landing sequence.
+          finale = null;
+          running = false;
+          return;
+        }
+        if (!running) {
+          // The main loop (started in openGame) is already ticking every
+          // frame regardless of `running` — just reset the state here.
+          // Starting another requestAnimationFrame chain on top of it was
+          // the bug that made restarts run the physics twice as fast.
+          reset();
+          return;
+        }
+        if (!player.jumping) {
+          player.vy = -14 * scale;
+          player.jumping = true;
+        }
+      }
+
+      function startFinale() {
+        obstacles = [];
+        finale = { t: 0, x0: playerX, y0: player.y, particles: [] };
+      }
+
+      // Where the dino is during the Pro "jetpack landing" cutscene: flies
+      // up, rotates through 118° then on to 180° while cruising, levels
+      // back out, and lands standing on the #1 podium block.
+      function finalePosition(t) {
+        const groundLine = groundY + playerSize;
+        const goldHeight = 110 * scale;
+        const podiumTopY = groundLine - goldHeight;
+        const landX = canvas.width / 2;
+        const landY = podiumTopY - playerSize * 0.3;
+
+        const ascendEnd = FINALE_ASCEND;
+        const cruiseEnd = ascendEnd + FINALE_CRUISE;
+        const descendEnd = cruiseEnd + FINALE_DESCEND;
+
+        const x1 = canvas.width * 0.35;
+        const y1 = canvas.height * 0.25;
+        const x2 = canvas.width * 0.62;
+        const y2 = canvas.height * 0.22;
+
+        if (t < ascendEnd) {
+          const p = t / ascendEnd;
+          return { x: lerp(finale.x0, x1, p), y: lerp(finale.y0, y1, p), angle: lerp(0, 118, p), phase: "fly" };
+        }
+        if (t < cruiseEnd) {
+          const p = (t - ascendEnd) / FINALE_CRUISE;
+          const bob = Math.sin(p * Math.PI * 3) * 8 * scale;
+          return { x: lerp(x1, x2, p), y: lerp(y1, y2, p) + bob, angle: lerp(118, 180, p), phase: "fly" };
+        }
+        if (t < descendEnd) {
+          const p = (t - cruiseEnd) / FINALE_DESCEND;
+          // 180 -> 360 reads as leveling back out to upright (360 === 0).
+          return { x: lerp(x2, landX, p), y: lerp(y2, landY, p), angle: lerp(180, 360, p), phase: "fly" };
+        }
+        return { x: landX, y: landY, angle: 0, phase: "podium" };
+      }
+
+      function updateFinale(dt) {
+        finale.t += dt;
+        if (finale.t < FINALE_ASCEND + FINALE_CRUISE + FINALE_DESCEND && Math.random() < 0.5) {
+          const pos = finalePosition(finale.t);
+          finale.particles.push({ x: pos.x, y: pos.y, born: finale.t });
+        }
+        finale.particles = finale.particles.filter((p) => finale.t - p.born < 500);
+
+        if (finale.t >= FINALE_TOTAL) {
+          finale = null;
+          running = false;
+        }
+      }
+
+      function spawnObstacle() {
+        const groundLine = groundY + playerSize;
+        const roll = Math.random();
+        if (roll < 0.25 && (score > 15 || secretMode)) {
+          const flightOffsets = [90, 150, 210].map((o) => o * scale);
+          const offset = flightOffsets[Math.floor(Math.random() * flightOffsets.length)];
+          obstacles.push({
+            type: "pterodactyl",
+            emoji: "🦅",
+            x: canvas.width,
+            width: 40 * scale,
+            height: 30 * scale,
+            top: groundLine - offset,
+          });
+        } else if (roll < 0.55) {
+          const height = 60 * scale;
+          obstacles.push({
+            type: "cactus",
+            emoji: "🌵🌵",
+            x: canvas.width,
+            width: 46 * scale,
+            height,
+            top: groundLine - height,
+          });
+        } else {
+          const height = 36 * scale;
+          obstacles.push({
+            type: "cactus",
+            emoji: "🌵",
+            x: canvas.width,
+            width: 22 * scale,
+            height,
+            top: groundLine - height,
+          });
+        }
+      }
+
+      function update(dt) {
+        // Normalize movement to elapsed time (steps of 60fps) so the game
+        // runs at the same speed and looks smooth no matter the actual
+        // frame rate, instead of jittering when frames are dropped.
+        const step = dt / 16.6667;
+
+        player.vy += 0.6 * scale * step;
+        player.y += player.vy * step;
+        if (player.y >= groundY) {
+          player.y = groundY;
+          player.vy = 0;
+          player.jumping = false;
+        }
+
+        spawnTimer -= dt;
+        if (spawnTimer <= 0) {
+          spawnObstacle();
+          spawnTimer = 900 + Math.random() * 700;
+        }
+        for (const o of obstacles) o.x -= speed * step;
+        obstacles = obstacles.filter((o) => o.x + o.width > 0);
+
+        for (const c of clouds) {
+          c.x -= 0.4 * step;
+          if (c.x < -40) c.x = canvas.width + 40;
+        }
+
+        for (const o of obstacles) {
+          const overlapX = playerX + playerSize > o.x && playerX < o.x + o.width;
+          const overlapY = player.y < o.top + o.height && player.y + playerSize > o.top;
+          if (overlapX && overlapY) {
+            if (proMode) {
+              startFinale();
+            } else {
+              running = false;
+            }
+            break;
+          }
+        }
+
+        score += step * 0.17;
+        speed = (6 + score / 150) * scale;
+      }
+
+      function draw() {
+        const groundLine = groundY + playerSize;
+
+        const sky = ctx.createLinearGradient(0, 0, 0, groundLine);
+        sky.addColorStop(0, "#87ceeb");
+        sky.addColorStop(1, "#e3f6ff");
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#ffe066";
+        ctx.beginPath();
+        ctx.arc(canvas.width - 70, 60, 28, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = "#ffffffcc";
+        for (const c of clouds) {
+          ctx.beginPath();
+          ctx.ellipse(c.x, c.y, 26, 13, 0, 0, Math.PI * 2);
+          ctx.ellipse(c.x + 20, c.y + 4, 19, 10, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = "#c2a878";
+        ctx.fillRect(0, groundLine, canvas.width, canvas.height - groundLine);
+        ctx.strokeStyle = "#8a6d3b";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(0, groundLine);
+        ctx.lineTo(canvas.width, groundLine);
+        ctx.stroke();
+
+        if (finale) {
+          drawFinale();
+        } else {
+          ctx.textBaseline = "alphabetic";
+          ctx.font = Math.round(playerSize + 14 * scale) + "px serif";
+          const runBob = running && !player.jumping ? Math.sin(performance.now() / 140) * 2 * scale : 0;
+          if (secretMode) ctx.filter = "hue-rotate(" + Math.round((performance.now() / 10) % 360) + "deg)";
+          ctx.fillText("🦖", playerX - 8, player.y + playerSize + runBob);
+          ctx.filter = "none";
+
+          for (const o of obstacles) {
+            ctx.font = Math.round(o.height) + "px serif";
+            ctx.fillText(o.emoji, o.x, o.top + o.height);
+          }
+        }
+
+        ctx.fillStyle = "#24292e";
+        ctx.font = "bold 20px sans-serif";
+        ctx.textAlign = "left";
+        ctx.fillText("Score: " + Math.floor(score), 20, 40);
+
+        if (!running && !finale) {
+          ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = "#fff";
+          ctx.textAlign = "center";
+          ctx.font = "bold 28px sans-serif";
+          ctx.fillText("Game over!", canvas.width / 2, canvas.height / 2 - 14);
+          ctx.font = "18px sans-serif";
+          ctx.fillText("Space, tap, or click to restart", canvas.width / 2, canvas.height / 2 + 20);
+          ctx.textAlign = "left";
+        }
+      }
+
+      function drawFlyingDino(x, y, angleDeg) {
+        const rad = (angleDeg * Math.PI) / 180;
+        ctx.save();
+        ctx.font = Math.round(playerSize * 0.8) + "px serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("🚀", x - Math.sin(rad) * playerSize * 0.5, y + Math.cos(rad) * playerSize * 0.5);
+        ctx.translate(x, y);
+        ctx.rotate(rad);
+        ctx.font = Math.round(playerSize + 14 * scale) + "px serif";
+        ctx.fillText("🦖", 0, 0);
+        ctx.restore();
+        ctx.textAlign = "left";
+        ctx.textBaseline = "alphabetic";
+      }
+
+      function drawPodiumScene(x, y) {
+        const groundLine = groundY + playerSize;
+        const blockW = 70 * scale;
+        const gap = 14 * scale;
+        const heights = [80 * scale, 110 * scale, 60 * scale];
+        const colors = ["#c0c0c0", "#ffd700", "#cd7f32"];
+        const labels = ["2", "1", "3"];
+        const totalW = blockW * 3 + gap * 2;
+        const startX = canvas.width / 2 - totalW / 2;
+
+        for (let i = 0; i < 3; i++) {
+          const bx = startX + i * (blockW + gap);
+          const bh = heights[i];
+          ctx.fillStyle = colors[i];
+          ctx.fillRect(bx, groundLine - bh, blockW, bh);
+          ctx.fillStyle = "#24292e";
+          ctx.font = "bold " + Math.round(24 * scale) + "px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(labels[i], bx + blockW / 2, groundLine - bh / 2 + 8 * scale);
+        }
+
+        ctx.font = Math.round(playerSize + 14 * scale) + "px serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "alphabetic";
+        ctx.fillText("🦖", x, y + playerSize * 0.5);
+
+        ctx.font = Math.round(16 * scale) + "px serif";
+        for (let i = 0; i < 10; i++) {
+          const cx = startX - 40 * scale + i * ((totalW + 80 * scale) / 10);
+          const cy = (finale.t * 0.3 + i * 53) % groundLine;
+          ctx.fillText(["🎉", "✨", "🎊"][i % 3], cx, cy);
+        }
+
+        ctx.fillStyle = "#fff";
+        ctx.font = "bold " + Math.round(26 * scale) + "px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("🏆 You're #1! 🏆", canvas.width / 2, groundLine - heights[1] - 40 * scale);
+        ctx.textAlign = "left";
+      }
+
+      function drawFinale() {
+        for (const p of finale.particles) {
+          const age = finale.t - p.born;
+          const alpha = Math.max(0, 1 - age / 500);
+          ctx.fillStyle = `rgba(255,140,0,${alpha})`;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 5 * scale, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        const pos = finalePosition(finale.t);
+        if (pos.phase === "fly") {
+          drawFlyingDino(pos.x, pos.y, pos.angle);
+        } else {
+          drawPodiumScene(pos.x, pos.y);
+        }
+      }
+
+      function loop(time) {
+        if (!active) return;
+        const dt = lastTime ? Math.min(time - lastTime, 50) : 16;
+        lastTime = time;
+        if (finale) {
+          updateFinale(dt);
+        } else if (running) {
+          update(dt);
+        }
+        draw();
+        // Always keep this single chain alive (while the overlay is open),
+        // even on game-over — it still needs to redraw, and a restart
+        // should never spin up a second, overlapping loop.
+        requestAnimationFrame(loop);
+      }
+
+      function openGame() {
+        proMode = isProMode();
+        secretMode = isSecretMode();
+        overlay.hidden = false;
+        active = true;
+        resizeCanvas();
+        reset();
+        lastTime = null;
+        requestAnimationFrame(loop);
+      }
+
+      function closeGame() {
+        active = false;
+        overlay.hidden = true;
+      }
+
+      startButton.addEventListener("click", openGame);
+      closeButton.addEventListener("click", closeGame);
+      canvas.addEventListener("click", jump);
+      window.addEventListener("resize", () => {
+        if (!overlay.hidden) resizeCanvas();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (overlay.hidden) return;
+        if (e.code === "Space") {
+          e.preventDefault();
+          jump();
+        } else if (e.code === "Escape") {
+          closeGame();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
