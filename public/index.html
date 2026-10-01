@@ -573,9 +573,11 @@
       const overlay = document.getElementById("dinoOverlay");
       const startButton = document.getElementById("dinoStartButton");
       const closeButton = document.getElementById("dinoCloseButton");
-      const playerSize = 32;
+      const BASE_PLAYER_SIZE = 32;
       const playerX = 50;
 
+      let scale = 1;
+      let playerSize = BASE_PLAYER_SIZE;
       let groundY = 300;
       let active = false;
       let player, obstacles, clouds, speed, score, running, lastTime, spawnTimer;
@@ -583,7 +585,12 @@
       function resizeCanvas() {
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
-        groundY = canvas.height - 90;
+        // Scale everything to the screen size so the playable area looks right
+        // on both a small phone and a huge desktop monitor, instead of a tiny
+        // strip of ground under a mostly-empty sky.
+        scale = Math.min(2, Math.max(0.9, Math.min(canvas.width, canvas.height) / 500));
+        playerSize = BASE_PLAYER_SIZE * scale;
+        groundY = canvas.height - 130 * scale;
         if (player && !player.jumping) player.y = groundY;
       }
 
@@ -595,7 +602,7 @@
           { x: canvas.width * 0.5, y: 100 },
           { x: canvas.width * 0.85, y: 50 },
         ];
-        speed = 6;
+        speed = 6 * scale;
         score = 0;
         spawnTimer = 0;
         running = true;
@@ -603,13 +610,15 @@
 
       function jump() {
         if (!running) {
+          // The main loop (started in openGame) is already ticking every
+          // frame regardless of `running` — just reset the state here.
+          // Starting another requestAnimationFrame chain on top of it was
+          // the bug that made restarts run the physics twice as fast.
           reset();
-          lastTime = null;
-          requestAnimationFrame(loop);
           return;
         }
         if (!player.jumping) {
-          player.vy = -14;
+          player.vy = -14 * scale;
           player.jumping = true;
         }
       }
@@ -618,33 +627,33 @@
         const groundLine = groundY + playerSize;
         const roll = Math.random();
         if (roll < 0.25 && score > 15) {
-          const flightOffsets = [90, 150, 210];
+          const flightOffsets = [90, 150, 210].map((o) => o * scale);
           const offset = flightOffsets[Math.floor(Math.random() * flightOffsets.length)];
           obstacles.push({
             type: "pterodactyl",
             emoji: "🦅",
             x: canvas.width,
-            width: 40,
-            height: 30,
+            width: 40 * scale,
+            height: 30 * scale,
             top: groundLine - offset,
           });
         } else if (roll < 0.55) {
-          const height = 60;
+          const height = 60 * scale;
           obstacles.push({
             type: "cactus",
             emoji: "🌵🌵",
             x: canvas.width,
-            width: 46,
+            width: 46 * scale,
             height,
             top: groundLine - height,
           });
         } else {
-          const height = 36;
+          const height = 36 * scale;
           obstacles.push({
             type: "cactus",
             emoji: "🌵",
             x: canvas.width,
-            width: 22,
+            width: 22 * scale,
             height,
             top: groundLine - height,
           });
@@ -652,8 +661,13 @@
       }
 
       function update(dt) {
-        player.vy += 0.6;
-        player.y += player.vy;
+        // Normalize movement to elapsed time (steps of 60fps) so the game
+        // runs at the same speed and looks smooth no matter the actual
+        // frame rate, instead of jittering when frames are dropped.
+        const step = dt / 16.6667;
+
+        player.vy += 0.6 * scale * step;
+        player.y += player.vy * step;
         if (player.y >= groundY) {
           player.y = groundY;
           player.vy = 0;
@@ -665,11 +679,11 @@
           spawnObstacle();
           spawnTimer = 900 + Math.random() * 700;
         }
-        for (const o of obstacles) o.x -= speed;
+        for (const o of obstacles) o.x -= speed * step;
         obstacles = obstacles.filter((o) => o.x + o.width > 0);
 
         for (const c of clouds) {
-          c.x -= 0.4;
+          c.x -= 0.4 * step;
           if (c.x < -40) c.x = canvas.width + 40;
         }
 
@@ -679,8 +693,8 @@
           if (overlapX && overlapY) running = false;
         }
 
-        score += dt * 0.01;
-        speed = 6 + score / 150;
+        score += step * 0.17;
+        speed = (6 + score / 150) * scale;
       }
 
       function draw() {
@@ -715,9 +729,9 @@
         ctx.stroke();
 
         ctx.textBaseline = "alphabetic";
-        ctx.font = (playerSize + 14) + "px serif";
-        const runBob = running && !player.jumping ? Math.sin(performance.now() / 90) * 3 : 0;
-        ctx.fillText("🦖", playerX - 8, player.y + playerSize + 8 + runBob);
+        ctx.font = Math.round(playerSize + 14 * scale) + "px serif";
+        const runBob = running && !player.jumping ? Math.sin(performance.now() / 140) * 2 * scale : 0;
+        ctx.fillText("🦖", playerX - 8, player.y + playerSize + runBob);
 
         for (const o of obstacles) {
           ctx.font = Math.round(o.height) + "px serif";
@@ -726,7 +740,8 @@
 
         ctx.fillStyle = "#24292e";
         ctx.font = "bold 20px sans-serif";
-        ctx.fillText("Score: " + Math.floor(score), canvas.width - 170, 36);
+        ctx.textAlign = "left";
+        ctx.fillText("Score: " + Math.floor(score), 20, 40);
 
         if (!running) {
           ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
@@ -743,11 +758,14 @@
 
       function loop(time) {
         if (!active) return;
-        const dt = lastTime ? time - lastTime : 16;
+        const dt = lastTime ? Math.min(time - lastTime, 50) : 16;
         lastTime = time;
         if (running) update(dt);
         draw();
-        if (running) requestAnimationFrame(loop);
+        // Always keep this single chain alive (while the overlay is open),
+        // even on game-over — it still needs to redraw, and a restart
+        // should never spin up a second, overlapping loop.
+        requestAnimationFrame(loop);
       }
 
       function openGame() {
